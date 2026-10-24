@@ -1,0 +1,4 @@
+# The entrypoint runs inside a Linux container, so it must keep LF line endings even when checked out on Windows.
+*.sh text eol=lf
+Dockerfile text eol=lf
+requirements*.lock text eol=lf

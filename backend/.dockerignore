@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+data/
+demo-data/
+debug-dump/
+spike_out/
+build/
+dist/
+*.egg-info/
+spike.py
+*.md
+fly.toml
+Dockerfile
+.dockerignore

@@ -1,0 +1,45 @@
+# Secrets and credentials. Keys belong in the environment (or `fly secrets`), never in a file in this repository.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p8
+*.p12
+*.jks
+*.mobileprovision
+
+# The server's data: databases and uploaded notes are private, and so are debug dumps of what the AI saw and said
+/backend/data/
+/backend/demo-data/
+/backend/debug-dump/
+/backend/spike_out/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Local tool settings: machine-specific paths and the demo token (the preview launcher lives here)
+.claude/
+
+# Dependencies and build output (each folder also has its own .gitignore)
+node_modules/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+.expo/
+dist/
+build/
+web-build/
+*.tsbuildinfo
+
+# Logs and operating-system clutter
+*.log
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+.DS_Store
+Thumbs.db
