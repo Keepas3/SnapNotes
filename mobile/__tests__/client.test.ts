@@ -97,6 +97,39 @@ describe('ApiClient', () => {
     expect(() => new ApiClient('http://srv', 't', fakeFetch([]).impl).renameDeck('', 'x')).toThrow(/needs a deck id/);
   });
 
+  it('merges one deck into another and says how many cards moved', async () => {
+    const deck = { id: 'keep', name: 'Keep', topic: '', counts: { draft: 0, approved: 5, rejected: 0 } };
+    const { impl, calls } = fakeFetch([{ status: 200, body: { deck, moved: 3 } }]);
+    const api = new ApiClient('http://srv', 't', impl);
+
+    await expect(api.mergeDecks('keep', 'gone')).resolves.toEqual({ deck, moved: 3 });
+    expect(calls[0].url).toBe('http://srv/decks/keep/merge');
+    expect(calls[0].init.method).toBe('POST');
+    expect(JSON.parse(calls[0].init.body as string)).toEqual({ from_deck_id: 'gone' });
+    expect(() => api.mergeDecks('', 'gone')).toThrow(/two deck ids/);
+    expect(() => api.mergeDecks('keep', '')).toThrow(/two deck ids/);
+  });
+
+  it('shows the server\'s plain-words reason when a merge or a typed card is refused', async () => {
+    const { impl } = fakeFetch([
+      { status: 409, body: { detail: 'A deck cannot be merged into itself' } },
+      { status: 422, body: { detail: 'A fill-in-the-blank card needs a blank: wrap the answer like {{c1::answer}}.' } },
+    ]);
+    const api = new ApiClient('http://srv', 't', impl);
+    await expect(api.mergeDecks('a', 'a')).rejects.toMatchObject({ status: 409, message: 'A deck cannot be merged into itself' });
+    await expect(api.createCard('d1', { type: 'cloze', front: 'no blank', back: '' })).rejects.toMatchObject({ status: 422, message: expect.stringContaining('needs a blank') });
+  });
+
+  it('creates a typed card with a POST to the deck', async () => {
+    const { impl, calls } = fakeFetch([{ status: 201, body: { id: 'c9', origin: 'manual', status: 'approved' } }]);
+    const made = await new ApiClient('http://srv', 't', impl).createCard('d1', { type: 'basic', front: 'Capital of France?', back: 'Paris' });
+    expect(made).toMatchObject({ id: 'c9', origin: 'manual' });
+    expect(calls[0].url).toBe('http://srv/decks/d1/cards');
+    expect(calls[0].init.method).toBe('POST');
+    expect(JSON.parse(calls[0].init.body as string)).toEqual({ type: 'basic', front: 'Capital of France?', back: 'Paris' });
+    expect(() => new ApiClient('http://srv', 't', fakeFetch([]).impl).createCard('', { type: 'basic', front: 'a', back: 'b' })).toThrow(/needs a deck id/);
+  });
+
   it('reports an unreachable server as a network error', async () => {
     const { impl } = fakeFetch([new TypeError('Network request failed')]);
     const err = await new ApiClient('http://10.0.0.9:8000', 't', impl).listDecks().catch((e) => e);
@@ -148,6 +181,37 @@ describe('ApiClient', () => {
       // fetch must be left to set the multipart boundary
       expect((calls[0].init.headers as Record<string, string>)['Content-Type']).toBeUndefined();
       expect(calls[0].url).toBe('http://srv/documents');
+    } finally {
+      globalThis.FormData = RealFormData;
+    }
+  });
+
+  it('adds the deck id to an upload only when the cards are meant for an existing deck', async () => {
+    const appended: [string, unknown][] = [];
+    const RealFormData = globalThis.FormData;
+    globalThis.FormData = class {
+      append(key: string, value: unknown) {
+        appended.push([key, value]);
+      }
+    } as unknown as typeof FormData;
+
+    try {
+      const { impl } = fakeFetch([
+        { status: 202, body: { document_id: 'd', job_id: 'j' } },
+        { status: 202, body: { document_id: 'd', job_id: 'j' } },
+      ]);
+      const api = new ApiClient('http://srv', 't', impl);
+      const file = { uri: 'file:///cache/a.md', name: 'a.md' };
+
+      await api.uploadDocument([file], false, 'deck-7');
+      expect(appended.filter(([key]) => key !== 'files')).toEqual([
+        ['auto_approve', 'false'],
+        ['deck_id', 'deck-7'],
+      ]);
+
+      appended.length = 0;
+      await api.uploadDocument([file], false);
+      expect(appended.map(([key]) => key)).toEqual(['files', 'auto_approve']); // an ordinary upload carries no deck field
     } finally {
       globalThis.FormData = RealFormData;
     }

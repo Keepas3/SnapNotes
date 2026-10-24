@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import uuid
 from datetime import datetime, timezone
@@ -11,6 +12,9 @@ from app.core.db import Database
 
 CARD_STATUSES = ("draft", "approved", "rejected")
 CARD_DIFFICULTIES = ("easy", "medium", "hard")
+MANUAL_CARD_TYPES = ("basic", "cloze")
+MANUAL_SOURCE = "Added by you"  # `source_ref` of a card the user typed in, and what the app and exports show for its origin "manual"
+_CLOZE_BLANK = re.compile(r"\{\{c\d+::.+?\}\}", re.DOTALL)
 
 
 def now() -> str:
@@ -80,6 +84,26 @@ class Library:
         with self.db.tx() as c:
             return c.execute("DELETE FROM decks WHERE id = ?", (deck_id,)).rowcount > 0
 
+    def merge_decks(self, into_id: str, from_id: str) -> tuple[dict[str, Any], int] | None:
+        """Move every card of `from_id` into `into_id`, then remove `from_id`, in one transaction.
+
+        Returns the destination deck and how many cards moved, or None when either deck does not exist. Cards keep their ids
+        and their status, so review logs and schedules (which hang off the card id) are untouched; only the deck changes.
+        Uploads that were headed for, or produced, the removed deck are pointed at the destination so nothing is orphaned."""
+        if into_id == from_id:
+            raise ValueError("A deck cannot be merged into itself")
+        ts = now()
+        with self.db.tx() as c:
+            found = {r["id"] for r in c.execute("SELECT id FROM decks WHERE id IN (?, ?)", (into_id, from_id)).fetchall()}
+            if found != {into_id, from_id}:
+                return None
+            moved = c.execute("UPDATE cards SET deck_id = ?, updated_at = ? WHERE deck_id = ?", (into_id, ts, from_id)).rowcount
+            c.execute("UPDATE jobs SET deck_id = ? WHERE deck_id = ?", (into_id, from_id))
+            c.execute("UPDATE jobs SET target_deck_id = ? WHERE target_deck_id = ?", (into_id, from_id))
+            c.execute("UPDATE decks SET updated_at = ? WHERE id = ?", (ts, into_id))
+            c.execute("DELETE FROM decks WHERE id = ?", (from_id,))
+        return self.get_deck(into_id), moved  # type: ignore[return-value]
+
     # -- cards ---------------------------------------------------------------------------
 
     def list_cards(self, *, deck_id: str | None = None, job_id: str | None = None, status: str | None = None) -> list[dict[str, Any]]:
@@ -99,6 +123,10 @@ class Library:
 
     def update_card(self, card_id: str, fields: dict[str, Any]) -> dict[str, Any] | None:
         """Edit front/back/tags/difficulty/status. Unknown keys are ignored; invalid values raise ValueError."""
+        if fields.get("back") is not None and not str(fields["back"]).strip():
+            existing = self.get_card(card_id)
+            if existing is not None and existing["type"] != "cloze":  # only a fill-in-the-blank card may have no explanation
+                raise ValueError("Write the back of the card.")
         sets, args = [], []
         for key in ("front", "back", "difficulty", "status"):
             if key in fields and fields[key] is not None:
@@ -118,6 +146,32 @@ class Library:
         with self.db.tx() as c:
             if c.execute(f"UPDATE cards SET {', '.join(sets)} WHERE id = ?", args).rowcount == 0:
                 return None
+        return self.get_card(card_id)
+
+    def create_card(self, deck_id: str, *, type: str, front: str, back: str = "") -> dict[str, Any] | None:
+        """A card the user typed in. It is approved straight away (there is nothing to review), has no job, and is marked
+        `origin = "manual"`. Returns None for an unknown deck; raises ValueError (a sentence for the user) for bad text."""
+        front, back = front.strip(), back.strip()
+        if type not in MANUAL_CARD_TYPES:
+            raise ValueError(f"type must be one of {MANUAL_CARD_TYPES}")
+        if not front:
+            raise ValueError("Write the front of the card.")
+        if type == "cloze":
+            if not _CLOZE_BLANK.search(front):
+                raise ValueError("A fill-in-the-blank card needs a blank: wrap the answer like {{c1::answer}}.")
+        elif not back:
+            raise ValueError("Write the back of the card.")
+        card_id, ts = new_id(), now()
+        with self.db.tx() as c:
+            if c.execute("SELECT 1 FROM decks WHERE id = ?", (deck_id,)).fetchone() is None:
+                return None
+            c.execute(
+                "INSERT INTO cards(id, deck_id, job_id, type, front, back, origin, source_ref, source_snippet, tags_json,"
+                " difficulty, status, atomic, grounded, issue, duplicate_of, created_at, updated_at)"
+                " VALUES (?,?,NULL,?,?,?,'manual',?,'','[]','medium','approved',1,1,'',NULL,?,?)",
+                (card_id, deck_id, type, front, back, MANUAL_SOURCE, ts, ts),
+            )
+            c.execute("UPDATE decks SET updated_at = ? WHERE id = ?", (ts, deck_id))
         return self.get_card(card_id)
 
     def delete_card(self, card_id: str) -> bool:

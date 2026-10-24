@@ -9,6 +9,8 @@ import type {
   Deck,
   EvidenceResponse,
   Job,
+  MergeResult,
+  NewCard,
   SyncRequest,
   SyncResponse,
   UploadFile,
@@ -158,7 +160,8 @@ export class ApiClient {
 
   // -- documents & jobs ---------------------------------------------------------------
 
-  async uploadDocument(files: UploadFile[], autoApprove: boolean): Promise<{ document_id: string; job_id: string }> {
+  /** `deckId`: add the new cards to that existing deck instead of making a new one. */
+  async uploadDocument(files: UploadFile[], autoApprove: boolean, deckId?: string): Promise<{ document_id: string; job_id: string }> {
     const form = new FormData();
     for (const f of files) {
       if (Platform.OS === 'web') {
@@ -173,6 +176,7 @@ export class ApiClient {
       }
     }
     form.append('auto_approve', autoApprove ? 'true' : 'false');
+    if (deckId) form.append('deck_id', deckId);
     return this.request('POST', '/documents', { form, timeoutMs: UPLOAD_TIMEOUT_MS });
   }
 
@@ -222,6 +226,18 @@ export class ApiClient {
 
   deleteDeck(id: string): Promise<void> {
     return this.request('DELETE', `/decks/${id}`);
+  }
+
+  /** Move every card of `fromId` into `intoId` and remove `fromId`. Study history travels with the cards. */
+  mergeDecks(intoId: string, fromId: string): Promise<MergeResult> {
+    if (!intoId || !fromId) throw new Error('mergeDecks needs two deck ids');
+    return this.request('POST', `/decks/${intoId}/merge`, { json: { from_deck_id: fromId } });
+  }
+
+  /** Add a card you typed yourself; it is approved at once and reaches the phone on the next sync. */
+  createCard(deckId: string, card: NewCard): Promise<Card> {
+    if (!deckId) throw new Error('createCard needs a deck id');
+    return this.request('POST', `/decks/${deckId}/cards`, { json: card });
   }
 
   deckCards(deckId: string, status?: CardStatus): Promise<Card[]> {

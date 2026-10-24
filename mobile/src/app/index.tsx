@@ -224,7 +224,7 @@ function DeckRow({ deck, drafts }: { deck: DeckSummary; drafts: number }) {
       {studyable > 0 ? (
         <Button title={`Study (${studyable})`} variant="secondary" onPress={() => router.push({ pathname: '/study/[deckId]', params: { deckId: deck.id } })} />
       ) : null}
-      <DeckSettingsSheet deck={settingsOpen ? { id: deck.id, name: deck.name } : null} onClose={() => setSettingsOpen(false)} onRenamed={refreshPhone} />
+      <DeckSettingsSheet deck={settingsOpen ? { id: deck.id, name: deck.name } : null} onClose={() => setSettingsOpen(false)} onChanged={refreshPhone} />
     </Card>
   );
 }

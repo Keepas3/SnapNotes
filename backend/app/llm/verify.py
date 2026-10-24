@@ -39,6 +39,30 @@ def find_duplicates(cards: list[Card], threshold: int = FUZZY_DUPLICATE_THRESHOL
     return dupes
 
 
+ALREADY_IN_DECK = "Already in this deck."  # added to the `issue` of a new card that repeats one the deck already holds
+
+
+def find_duplicates_of_existing(
+    cards: list[Card], existing: list[tuple[str, str]], threshold: int = FUZZY_DUPLICATE_THRESHOLD
+) -> dict[int, str]:
+    """Map new-card index -> id of the card already in the deck that it repeats.
+
+    Used when notes are added to an existing deck. It is the same strict string match as `find_duplicates`, so a reworded
+    question about the same fact is not caught; `existing` is a list of (card id, front)."""
+    known = [(card_id, _norm(front)) for card_id, front in existing]
+    known = [(card_id, front) for card_id, front in known if front]
+    dupes: dict[int, str] = {}
+    for j, card in enumerate(cards):
+        front = _norm(card.front)
+        if not front:
+            continue
+        for card_id, other in known:
+            if fuzz.token_sort_ratio(other, front) >= threshold:
+                dupes[j] = card_id
+                break
+    return dupes
+
+
 def verify_cards(
     client: LLM, source: SourceDoc, evidence: list[EvidenceItem], cards: list[Card]
 ) -> list[ReviewedCard]:

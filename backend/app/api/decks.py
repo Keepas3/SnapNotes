@@ -5,7 +5,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Response
 
 from app.api.deps import get_library
-from app.api.models import CardOut, CardStatus, DeckIn, DeckOut, DeckPatch
+from app.api.models import CardIn, CardOut, CardStatus, DeckIn, DeckOut, DeckPatch, MergeIn, MergeOut
 from app.export import content_disposition, safe_filename_stem
 from app.export.anki import build_apkg
 from app.export.csv_export import build_csv
@@ -44,6 +44,37 @@ def update_deck(deck_id: str, body: DeckPatch, library: Library = Depends(get_li
 def delete_deck(deck_id: str, library: Library = Depends(get_library)) -> None:
     if not library.delete_deck(deck_id):
         raise HTTPException(404, "Deck not found")
+
+
+@router.post("/{deck_id}/merge", response_model=MergeOut)
+def merge_deck(deck_id: str, body: MergeIn, library: Library = Depends(get_library)):
+    """Move every card of another deck into this one, then remove the other deck.
+
+    Cards keep their ids, so study history and schedules carry over; drafts and set-aside cards move too, with their status."""
+    if library.get_deck(deck_id) is None:
+        raise HTTPException(404, "Deck not found")
+    if library.get_deck(body.from_deck_id) is None:
+        raise HTTPException(404, "The deck to merge in was not found")
+    try:
+        result = library.merge_decks(deck_id, body.from_deck_id)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if result is None:  # deleted between the checks above and the merge
+        raise HTTPException(404, "Deck not found")
+    deck, moved = result
+    return {"deck": deck, "moved": moved}
+
+
+@router.post("/{deck_id}/cards", response_model=CardOut, status_code=201)
+def create_card(deck_id: str, body: CardIn, library: Library = Depends(get_library)):
+    """Add a card you typed yourself. It is approved at once and reaches the phone on the next sync."""
+    try:
+        card = library.create_card(deck_id, type=body.type, front=body.front, back=body.back)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if card is None:
+        raise HTTPException(404, "Deck not found")
+    return card
 
 
 @router.get("/{deck_id}/export")

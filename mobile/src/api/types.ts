@@ -11,7 +11,7 @@ export type JobStatus =
 
 export type CardStatus = 'draft' | 'approved' | 'rejected';
 export type CardType = 'basic' | 'cloze' | 'definition';
-export type Origin = 'notes' | 'web' | 'ai';
+export type Origin = 'notes' | 'web' | 'ai' | 'manual'; // "manual": typed in by the user
 export type Difficulty = 'easy' | 'medium' | 'hard';
 
 export interface Understanding {
@@ -38,6 +38,8 @@ export interface Job {
   auto_approve: boolean;
   cost_usd: number;
   deck_id: string | null;
+  /** The deck this upload was told to add its cards to; absent from older servers, and null for an ordinary upload. */
+  target_deck_id?: string | null;
   understanding: Understanding | null;
   created_at: string;
   updated_at: string;
@@ -86,6 +88,13 @@ export interface CardPatch {
   status?: CardStatus;
 }
 
+/** A card typed in by hand. A fill-in-the-blank card needs a {{c1::blank}} in its front and may leave the back empty. */
+export interface NewCard {
+  type: Exclude<CardType, 'definition'>;
+  front: string;
+  back: string;
+}
+
 export interface Deck {
   id: string;
   name: string;
@@ -93,6 +102,12 @@ export interface Deck {
   counts: Record<CardStatus, number>;
   created_at: string;
   updated_at: string;
+}
+
+/** What a merge returns: the deck that absorbed the other one, and how many cards moved. */
+export interface MergeResult {
+  deck: Deck;
+  moved: number;
 }
 
 // -- sync (mirrors backend/app/api/sync.py) ---------------------------------------------

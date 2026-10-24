@@ -148,7 +148,7 @@ SYNC_TRIGGER_STATEMENTS = [
     _tombstone_trigger("decks", "deck"),
     _tombstone_trigger("cards", "card"),
 ]
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 class Database:
@@ -196,6 +196,10 @@ class Database:
                 # Version 3: the database's identity, so devices can tell when it is not the one they synced with.
                 conn.execute("CREATE TABLE IF NOT EXISTS sync_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
                 conn.execute("INSERT OR IGNORE INTO sync_meta(key, value) VALUES ('epoch', ?)", (uuid.uuid4().hex,))
+            if version < 4:
+                # Version 4: a job can be told to add its cards to an existing deck instead of making a new one.
+                if "target_deck_id" not in {row[1] for row in conn.execute("PRAGMA table_info(jobs)")}:
+                    conn.execute("ALTER TABLE jobs ADD COLUMN target_deck_id TEXT REFERENCES decks(id) ON DELETE SET NULL")
             conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             conn.execute("COMMIT")
         except BaseException:

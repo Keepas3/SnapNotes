@@ -31,6 +31,7 @@ class JobOut(BaseModel):
     auto_approve: bool
     cost_usd: float
     deck_id: str | None
+    target_deck_id: str | None = None  # the deck this upload was told to add its cards to, when it was not meant to make a new one
     understanding: UnderstandingOut | None
     created_at: str
     updated_at: str
@@ -82,7 +83,7 @@ class CardOut(BaseModel):
 
 class CardPatch(BaseModel):
     front: str | None = Field(default=None, min_length=1)
-    back: str | None = Field(default=None, min_length=1)
+    back: str | None = None  # may be empty for a fill-in-the-blank card (its explanation is optional); the store insists on text for any other card
     tags: list[str] | None = None
     difficulty: Literal["easy", "medium", "hard"] | None = None
     status: CardStatus | None = None
@@ -120,3 +121,20 @@ class DeckIn(BaseModel):
 class DeckPatch(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=80)
     topic: str | None = Field(default=None, max_length=120)
+
+
+class MergeIn(BaseModel):
+    from_deck_id: str = Field(min_length=1, description="The deck whose cards move into the deck named in the URL; it is removed afterwards")
+
+
+class MergeOut(BaseModel):
+    deck: DeckOut
+    moved: int
+
+
+class CardIn(BaseModel):
+    """A card typed in by hand. Which sides are required depends on the type, and the server says so in plain words."""
+
+    type: Literal["basic", "cloze"] = "basic"
+    front: str = Field(max_length=2000)
+    back: str = Field(default="", max_length=2000)

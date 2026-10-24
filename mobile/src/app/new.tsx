@@ -1,6 +1,6 @@
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
-import { Stack, router } from 'expo-router';
+import { Stack, router, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
 import { Image, Pressable, StyleSheet, Switch, View } from 'react-native';
 
@@ -12,6 +12,9 @@ import { Spacing } from '@/constants/theme';
 import { formatBytes, isImage, MAX_FILES, photoName, validateSelection } from '@/lib/upload';
 
 export default function NewDeckScreen() {
+  // Opened from a deck's settings with the deck to add to; opened from Home with nothing, it makes a new deck.
+  const { deckId, deckName } = useLocalSearchParams<{ deckId?: string; deckName?: string }>();
+  const adding = Boolean(deckId);
   const upload = useUpload();
   const [files, setFiles] = useState<UploadFile[]>([]);
   const [skipApproval, setSkipApproval] = useState(false);
@@ -56,7 +59,7 @@ export default function NewDeckScreen() {
     if (problem) return setError(problem);
     setError(null);
     try {
-      const { job_id } = await upload.mutateAsync({ files, autoApprove: skipApproval });
+      const { job_id } = await upload.mutateAsync({ files, autoApprove: skipApproval, deckId: deckId || undefined });
       router.replace({ pathname: '/jobs/[id]', params: { id: job_id } });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Upload failed.');
@@ -67,20 +70,24 @@ export default function NewDeckScreen() {
     <Screen
       footer={
         <Button
-          title={files.length ? `Upload ${files.length} ${files.length === 1 ? 'file' : 'files'} and generate` : 'Choose notes to start'}
+          title={
+            files.length ? `Upload ${files.length} ${files.length === 1 ? 'file' : 'files'} and ${adding ? 'add cards' : 'generate'}` : 'Choose notes to start'
+          }
           onPress={submit}
           disabled={files.length === 0}
           loading={upload.isPending}
         />
       }>
-      <Stack.Screen options={{ title: 'New deck' }} />
+      <Stack.Screen options={{ title: adding ? `Add to “${deckName || 'deck'}”` : 'New deck' }} />
 
       <Section title="Add your notes">
         <Button title="Take a photo of your notes" onPress={takePhoto} />
         <Button title="Choose photos" variant="secondary" onPress={pickPhotos} />
         <Button title="Choose files (PDF, Word, slides, text)" variant="secondary" onPress={pickDocuments} />
         <ThemedText type="caption" themeColor="textSecondary">
-          Several photos of consecutive pages become one deck. Up to {MAX_FILES} files, 30 MB in total.
+          {adding
+            ? `The new cards are added to “${deckName || 'this deck'}” for you to review; any that repeat a card already there are set aside. Several photos of consecutive pages are read as one set of notes. Up to ${MAX_FILES} files, 30 MB in total.`
+            : `Several photos of consecutive pages become one deck. Up to ${MAX_FILES} files, 30 MB in total.`}
         </ThemedText>
       </Section>
 

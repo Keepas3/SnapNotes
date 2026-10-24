@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isActive } from '@/lib/steps';
 import { useApi } from '@/lib/settings';
 
-import type { Card, CardPatch, CardStatus, UploadFile } from './types';
+import type { Card, CardPatch, CardStatus, NewCard, UploadFile } from './types';
 
 const POLL_MS = 1500;
 
@@ -44,9 +44,10 @@ export function useEvidence(jobId: string, enabled = true) {
   return useQuery({ queryKey: keys.evidence(jobId), queryFn: () => api.getEvidence(jobId), enabled, staleTime: 0 });
 }
 
-export function useJobCards(jobId: string, status?: CardStatus) {
+/** `enabled`: hold off until the job has produced its cards, so an empty list from earlier is not cached as the answer. */
+export function useJobCards(jobId: string, status?: CardStatus, enabled = true) {
   const api = useApi();
-  return useQuery({ queryKey: keys.jobCards(jobId, status), queryFn: () => api.jobCards(jobId, status) });
+  return useQuery({ queryKey: keys.jobCards(jobId, status), queryFn: () => api.jobCards(jobId, status), enabled });
 }
 
 export function useDecks() {
@@ -71,7 +72,7 @@ export function useUpload() {
   const api = useApi();
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: { files: UploadFile[]; autoApprove: boolean }) => api.uploadDocument(v.files, v.autoApprove),
+    mutationFn: (v: { files: UploadFile[]; autoApprove: boolean; deckId?: string }) => api.uploadDocument(v.files, v.autoApprove, v.deckId),
     onSuccess: () => qc.invalidateQueries({ queryKey: keys.jobs }),
   });
 }
@@ -133,6 +134,30 @@ export function useDeleteDeck() {
       qc.invalidateQueries({ queryKey: keys.decks });
       qc.invalidateQueries({ queryKey: keys.jobs });
     },
+  });
+}
+
+/** Move another deck's cards into `intoId` and remove that deck. The decks, their cards and the uploads that pointed at them all change. */
+export function useMergeDecks() {
+  const api = useApi();
+  const qc = useQueryClient();
+  const invalidate = useInvalidateLibrary();
+  return useMutation({
+    mutationFn: ({ intoId, fromId }: { intoId: string; fromId: string }) => api.mergeDecks(intoId, fromId),
+    onSuccess: () => {
+      invalidate();
+      qc.invalidateQueries({ queryKey: keys.jobs });
+    },
+  });
+}
+
+/** Add a card typed by hand to a deck. */
+export function useCreateCard() {
+  const api = useApi();
+  const invalidate = useInvalidateLibrary();
+  return useMutation({
+    mutationFn: ({ deckId, card }: { deckId: string; card: NewCard }) => api.createCard(deckId, card),
+    onSuccess: invalidate,
   });
 }
 

@@ -1,11 +1,12 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { Stack, router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 
 import { useDeck, useDeckCards, useDeleteDeck } from '@/api/hooks';
 import type { Card, CardStatus } from '@/api/types';
 import { CardEditor } from '@/components/card-editor';
+import { DeckSettingsSheet } from '@/components/deck-settings';
 import { ThemedText } from '@/components/themed-text';
 import { Badge, Banner, Button, Card as Panel, Centered, Chip, EmptyState, Screen, Section, Spinner } from '@/components/ui';
 import { Spacing } from '@/constants/theme';
@@ -41,6 +42,7 @@ export default function DeckScreen() {
     }, [queryClient, sync]),
   );
   const [editing, setEditing] = useState<Card | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const api = useApi();
   const [exporting, setExporting] = useState<ExportFormat | null>(null);
   const [exportMessage, setExportMessage] = useState<{ tone: 'success' | 'danger'; text: string } | null>(null);
@@ -78,6 +80,12 @@ export default function DeckScreen() {
     }
   }
 
+  /** The sheet changed the library on the server (a rename, another deck merged in); bring the phone's copy up to date. */
+  async function refreshPhone() {
+    queryClient.invalidateQueries({ queryKey: LOCAL_KEY });
+    await sync();
+  }
+
   async function onDelete() {
     if (!(await confirm(`Delete “${d.name}”?`, `All ${plural(d.counts.approved + d.counts.draft + d.counts.rejected, 'card')} in it will be removed.`, 'Delete', true))) return;
     await remove.mutateAsync(d.id);
@@ -102,7 +110,16 @@ export default function DeckScreen() {
           />
         </>
       }>
-      <Stack.Screen options={{ title: d.name }} />
+      <Stack.Screen
+        options={{
+          title: d.name,
+          headerRight: () => (
+            <Pressable accessibilityRole="button" accessibilityLabel="Deck settings" onPress={() => setSettingsOpen(true)} hitSlop={12}>
+              <ThemedText type="linkPrimary">Settings</ThemedText>
+            </Pressable>
+          ),
+        }}
+      />
 
       {d.topic ? (
         <ThemedText type="small" themeColor="textSecondary">
@@ -164,6 +181,7 @@ export default function DeckScreen() {
       <Button title="Delete deck" variant="ghost" onPress={onDelete} loading={remove.isPending} />
 
       <CardEditor card={editing} onClose={() => setEditing(null)} />
+      <DeckSettingsSheet deck={settingsOpen ? { id: d.id, name: d.name } : null} onClose={() => setSettingsOpen(false)} onChanged={refreshPhone} />
     </Screen>
   );
 }

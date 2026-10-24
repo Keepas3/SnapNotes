@@ -309,7 +309,7 @@ def test_databases_from_before_sync_are_upgraded_in_place(tmp_path):
     db.init()  # running it again is a no-op
 
     with db.conn() as c:
-        assert c.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert c.execute("PRAGMA user_version").fetchone()[0] == 4
         seqs = [r[0] for r in c.execute("SELECT seq FROM decks UNION ALL SELECT seq FROM cards ORDER BY 1")]
         assert seqs == [1, 2, 3, 4]  # distinct, so a first sync can page through them
         assert c.execute("SELECT seq FROM sync_counter").fetchone()[0] == 4

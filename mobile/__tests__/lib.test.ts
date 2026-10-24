@@ -1,6 +1,6 @@
 import { clozeAnswer, clozeQuestion, hasCloze, parseCloze } from '@/lib/cloze';
 import { deckSummary, domainOf, formatCost, plural, safeHttpUrl, splitCorrection, splitSuspectClaim } from '@/lib/format';
-import { deckNameProblem, deleteDeckMessage, MAX_DECK_NAME } from '@/lib/deck';
+import { deckNameProblem, deleteDeckMessage, MAX_CARD_TEXT, MAX_DECK_NAME, mergeCandidates, mergeDeckMessage, newCardProblem } from '@/lib/deck';
 import { originBadge, originLabel, sourceName } from '@/lib/origin';
 import { cardWarnings } from '@/lib/warnings';
 import { currentStepIndex, isActive, stepsFor } from '@/lib/steps';
@@ -79,6 +79,8 @@ describe('format', () => {
     expect(originLabel('notes')).toEqual({ label: 'From your notes', tone: 'neutral' });
     expect(originLabel('web')).toEqual({ label: 'From the web', tone: 'info' });
     expect(originLabel('ai')).toEqual({ label: 'From AI knowledge, not sourced', tone: 'warning' });
+    expect(originLabel('manual')).toEqual({ label: 'Added by you', tone: 'neutral' });
+    expect(originBadge('manual')).toEqual({ label: 'You', tone: 'neutral' });
     expect(originBadge('ai')).toEqual({ label: 'AI', tone: 'warning' });
     expect(originBadge('web').label).toBe('Web');
     expect(originBadge('notes').label).toBe('Notes');
@@ -107,6 +109,39 @@ describe('format', () => {
     expect(deleteDeckMessage(1, 0)).toBe('All 1 card in it will be removed. This cannot be undone.');
     expect(deleteDeckMessage(6, 3)).toBe('All 9 cards in it will be removed, including 3 still waiting for your review. This cannot be undone.');
     expect(deleteDeckMessage(0, 0)).toBe('The deck is empty. This cannot be undone.');
+  });
+
+  it('checks a card typed by hand before it is sent', () => {
+    expect(newCardProblem({ type: 'basic', front: 'Capital of France?', back: 'Paris' })).toBeNull();
+    expect(newCardProblem({ type: 'basic', front: '  ', back: 'Paris' })).toBe('Write the front of the card.');
+    expect(newCardProblem({ type: 'basic', front: 'Capital of France?', back: ' ' })).toBe('Write the back of the card.');
+    // a fill-in-the-blank card needs its blank, but no explanation
+    expect(newCardProblem({ type: 'cloze', front: 'The {{c1::mitochondrion}} makes ATP.', back: '' })).toBeNull();
+    expect(newCardProblem({ type: 'cloze', front: 'The mitochondrion makes ATP.', back: 'x' })).toBe(
+      'A fill-in-the-blank card needs a blank: wrap the answer like {{c1::answer}}.',
+    );
+    expect(newCardProblem({ type: 'basic', front: 'x'.repeat(MAX_CARD_TEXT), back: 'y' })).toBeNull();
+    expect(newCardProblem({ type: 'basic', front: 'x'.repeat(MAX_CARD_TEXT + 1), back: 'y' })).toBe(`Use at most ${MAX_CARD_TEXT} characters on each side.`);
+  });
+
+  it('offers every other deck for a merge, in alphabetical order', () => {
+    const decks = [
+      { id: 'c', name: 'Chemistry' },
+      { id: 'a', name: 'Anatomy' },
+      { id: 'b', name: 'Biology' },
+    ];
+    expect(mergeCandidates(decks, 'b').map((d) => d.name)).toEqual(['Anatomy', 'Chemistry']);
+    expect(mergeCandidates(decks, 'nope')).toHaveLength(3);
+    expect(mergeCandidates([], 'a')).toEqual([]);
+    expect(decks.map((d) => d.id)).toEqual(['c', 'a', 'b']); // the list that was passed in is left as it was
+  });
+
+  it('words the merge question with what moves, what is kept and what is removed', () => {
+    expect(mergeDeckMessage('Old notes', 'Biology', 12)).toBe(
+      'All 12 cards in “Old notes” move into “Biology”, and your study progress on them is kept. “Old notes” is then removed. This cannot be undone.',
+    );
+    expect(mergeDeckMessage('Old notes', 'Biology', 1)).toContain('All 1 card in');
+    expect(mergeDeckMessage('Empty', 'Biology', 0)).toBe('“Empty” has no cards. It will be removed. This cannot be undone.');
   });
 
   it('formats costs, plurals and deck summaries', () => {

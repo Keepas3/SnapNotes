@@ -26,7 +26,10 @@ def get_card(card_id: str, library: Library = Depends(get_library)):
 
 @router.patch("/{card_id}", response_model=CardOut)
 def update_card(card_id: str, body: CardPatch, library: Library = Depends(get_library)):
-    card = library.update_card(card_id, body.model_dump(exclude_unset=True))
+    try:
+        card = library.update_card(card_id, body.model_dump(exclude_unset=True))
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     if card is None:
         raise HTTPException(404, "Card not found")
     return card

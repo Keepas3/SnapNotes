@@ -8,11 +8,12 @@ Expo (SDK 58) + React Native + TypeScript, using Expo Router. It talks to the ba
 |---|---|---|
 | Home | `src/app/index.tsx` | Decks (from the on-device database, so it works offline) with due / new counts and a Study button, "to review" badges, jobs in progress, and sync status |
 | Study | `src/app/study/[deckId].tsx` | Spaced-repetition session for one deck or all decks (`all`): show answer, then Again / Hard / Good / Easy with the next interval on each button. Runs entirely on the device |
-| New deck | `src/app/new.tsx` | Take a photo, choose photos, or choose PDF / Word / slides / text; optional "skip source approval" |
+| New deck / add to a deck | `src/app/new.tsx` | Take a photo, choose photos, or choose PDF / Word / slides / text; optional "skip source approval". Opened from a deck's settings it adds to that deck instead |
 | Job progress | `src/app/jobs/[id]/index.tsx` | Five-step progress, retry or discard, and moves you on when the job needs you or finishes |
 | Approve sources | `src/app/jobs/[id]/sources.tsx` | Switch web sources on or off before cards are written; links open only as http(s) |
 | Review cards | `src/app/jobs/[id]/review.tsx` | Swipe right to approve, left to discard, tap to flip, edit, undo; cards the checker set aside can be restored |
-| Deck | `src/app/decks/[id].tsx` | Approved / to review / set aside, edit or delete cards, and Study |
+| Deck | `src/app/decks/[id].tsx` | Approved / to review / set aside, edit or delete cards, and Study; **Settings** (rename, add notes, merge) |
+| Add a card | `src/app/cards/new.tsx` | Type your own question and answer (or a fill-in-the-blank) into a deck |
 | Settings | `src/app/settings.tsx` | Server address and access token (stored in the OS keychain) with a connection test, new cards per day, sync status, disconnect |
 
 Shared code: `src/api` (typed client, TanStack Query hooks), `src/lib` (settings, helpers for cloze cards, job steps, swipe thresholds, upload rules), `src/components` (UI kit, swipe card, card editor), `src/db` (on-device SQLite), `src/study` (FSRS scheduler and local store), `src/sync` (sync engine and provider).
@@ -59,7 +60,14 @@ Plain `http://` works in Expo Go and the web preview. Installed builds (Mileston
 
 ## Managing decks
 
-Each deck on the home screen has two small buttons: the **✕** at the top right deletes the deck (after an "are you sure" that says how many cards go with it; this needs a connection, because the server holds the library), and the **⚙** at the top left opens the deck's settings, where you can **rename** it. The same sheet lists "add more cards to this deck" and "merge this deck with another one" as **coming soon**; they are placeholders and do nothing yet.
+Each deck on the home screen has two small buttons: the **✕** at the top right deletes the deck (after an "are you sure" that says how many cards go with it; this needs a connection, because the server holds the library), and the **⚙** at the top left opens the deck's settings. The same sheet is also reachable from inside a deck, with **Settings** at the top right. From it you can:
+
+- **Rename** the deck.
+- **Add notes to this deck.** Opens the upload screen aimed at the deck ("Add to “…”"). The new cards arrive as drafts in that deck for you to review, the deck's name stays, and any card that repeats one already in the deck is set aside with "Already in this deck." (only near-identical questions are caught, not reworded ones). The job screen says "Adding to “…”" and counts only this upload's cards.
+- **Type a card.** One question and answer you write yourself, either "Question and answer" or "Fill in the blank" (wrap the answer like `{{c1::answer}}`; an explanation is optional). It is approved straight away, labelled "Added by you", and can be studied after the sync that starts when you save.
+- **Merge another deck into this one.** Pick a deck from the list; after an "are you sure" that says how many cards move, all its cards (including ones still waiting for review) join this deck, your study progress on them is kept, and the other deck is removed. This deck keeps its title. It cannot be undone.
+
+All of these need a connection, like rename and delete, because the server holds the library; studying stays offline.
 
 ## Exporting a deck
 

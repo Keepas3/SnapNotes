@@ -152,8 +152,10 @@ class SyncStore:
     def pull(self, cursor: int, limit: int) -> PullResult:
         """Everything changed after `cursor`, at most `limit` rows per kind.
 
-        If any kind hits the limit the returned cursor stops at the earliest such boundary and `has_more` is set; rows
-        from other kinds beyond it may be included too, which is harmless because applying a row twice is idempotent."""
+        If any kind hits the limit the returned cursor stops at the earliest such boundary and `has_more` is set. Rows of
+        every kind past that cursor are left for the next page, so changes always arrive in the order they happened. That
+        matters for a merged deck: its cards are moved before it is deleted, and a device deletes a deck's cards when it is
+        told the deck is gone, so the deletion must never arrive ahead of the moves."""
         with self.db.conn() as c:
             c.execute("BEGIN")  # one snapshot for all the reads below
             try:
@@ -171,6 +173,11 @@ class SyncStore:
                 ).fetchall()
                 tombs = c.execute("SELECT seq, kind, id FROM tombstones WHERE seq > ? ORDER BY seq LIMIT ?", (cursor, limit)).fetchall()
 
+                # Only the rows selected by seq (not the schedules joined on to cards) decide where this page ends.
+                limited = [rows[-1]["seq"] for rows in (decks, cards, changed_states, tombs) if len(rows) >= limit]
+                end = min(limited) if limited else max_seq
+                decks, cards, changed_states, tombs = ([r for r in rows if r["seq"] <= end] for rows in (decks, cards, changed_states, tombs))
+
                 # A card always travels with its schedule, so a device never studies it as "new" by mistake.
                 states = list(changed_states)
                 have = {s["card_id"] for s in states}
@@ -183,11 +190,8 @@ class SyncStore:
             finally:
                 c.execute("COMMIT")
 
-        # Only the rows selected by seq (not the schedules joined on to cards) decide where this page ends.
-        limited = [rows[-1]["seq"] for rows in (decks, cards, changed_states, tombs) if len(rows) >= limit]
-
         return PullResult(
-            cursor=min(limited) if limited else max_seq,
+            cursor=end,
             has_more=bool(limited),
             decks=[dict(d) for d in decks],
             cards=[dict(card) for card in cards],

@@ -9,6 +9,8 @@ export function originLabel(origin: Origin): { label: string; tone: Tone } {
       return { label: 'From the web', tone: 'info' };
     case 'ai':
       return { label: 'From AI knowledge, not sourced', tone: 'warning' };
+    case 'manual':
+      return { label: 'Added by you', tone: 'neutral' };
     default:
       return { label: 'From your notes', tone: 'neutral' };
   }
@@ -21,6 +23,8 @@ export function originBadge(origin: Origin): { label: string; tone: Tone } {
       return { label: 'Web', tone: 'info' };
     case 'ai':
       return { label: 'AI', tone: 'warning' };
+    case 'manual':
+      return { label: 'You', tone: 'neutral' };
     default:
       return { label: 'Notes', tone: 'neutral' };
   }

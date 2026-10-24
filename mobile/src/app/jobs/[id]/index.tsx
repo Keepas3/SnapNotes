@@ -2,7 +2,7 @@ import { Stack, router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useRef } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
-import { useDeck, useDeleteDocument, useEvidence, useJob, useRetryJob } from '@/api/hooks';
+import { useDeck, useDeleteDocument, useEvidence, useJob, useJobCards, useRetryJob } from '@/api/hooks';
 import { SuspectClaims } from '@/components/suspect-claims';
 import { ThemedText } from '@/components/themed-text';
 import { Badge, Banner, Button, Card, Centered, Screen, Section, Spinner } from '@/components/ui';
@@ -18,7 +18,8 @@ export default function JobScreen() {
   const status = job.data?.status;
 
   const evidence = useEvidence(id, status === 'awaiting_approval');
-  const deck = useDeck(job.data?.deck_id);
+  const target = useDeck(job.data?.target_deck_id); // the deck this upload is adding to, when it is not making a new one
+  const jobCards = useJobCards(id, undefined, status === 'completed'); // this job's own cards: the deck may hold others too
   const retry = useRetryJob(id);
   const discard = useDeleteDocument();
 
@@ -58,8 +59,10 @@ export default function JobScreen() {
     router.replace('/');
   }
 
-  const draftCount = deck.data?.counts.draft ?? 0;
-  const approvedCount = deck.data?.counts.approved ?? 0;
+  const generated = (jobCards.data ?? []).filter((c) => c.status !== 'rejected'); // set-aside cards (repeats, unsupported ones) are not counted
+  const draftCount = generated.filter((c) => c.status === 'draft').length;
+  const addingTo = target.data?.name;
+  const title = j.target_deck_id ? (addingTo ? `Adding to “${addingTo}”` : 'Adding to a deck') : (j.understanding?.main_topic ?? 'New deck');
 
   return (
     <Screen
@@ -86,7 +89,7 @@ export default function JobScreen() {
           <Button title="Try again" onPress={() => retry.mutate()} loading={retry.isPending} />
         ) : undefined
       }>
-      <Stack.Screen options={{ title: j.understanding?.main_topic ?? 'New deck' }} />
+      <Stack.Screen options={{ title }} />
 
       <Card>
         <View style={styles.between}>
@@ -120,8 +123,15 @@ export default function JobScreen() {
         ) : null}
       </Section>
 
-      {j.status === 'completed' ? (
-        <Banner tone="success" message={`${plural(draftCount + approvedCount, 'card')} generated${draftCount ? `, ${draftCount} waiting for your review` : ''}.`} />
+      {j.status === 'completed' && jobCards.isSuccess ? (
+        generated.length === 0 && addingTo ? (
+          <Banner tone="info" message={`No new cards were added to “${addingTo}”. Anything that repeated a card already there was set aside.`} />
+        ) : (
+          <Banner
+            tone="success"
+            message={`${plural(generated.length, 'card')} ${addingTo ? `added to “${addingTo}”` : 'generated'}${draftCount ? `, ${draftCount} waiting for your review` : ''}.`}
+          />
+        )
       ) : null}
 
       <ThemedText type="caption" themeColor="textSecondary">

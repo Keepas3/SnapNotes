@@ -116,13 +116,21 @@ What this does not test: Claude's web search and citations, prompt caching and c
 
 ### How a document becomes cards
 
-1. `POST /documents` (multipart `files`, optional `auto_approve=true`) returns a `job_id` immediately.
+1. `POST /documents` (multipart `files`, optional `auto_approve=true`, optional `deck_id`) returns a `job_id` immediately. With a `deck_id` the cards are added to that existing deck instead of a new one (see "Growing a deck" below); an unknown deck is a 404 before anything is saved.
 2. Poll `GET /jobs/{id}`. Status goes `queued` -> `researching` -> `awaiting_approval`.
 3. `GET /jobs/{id}/evidence` lists the web sources found. `POST /jobs/{id}/approve` with `{"rejected_ids": [...]}` approves the rest. (With no web evidence, or `auto_approve`, this step is skipped.)
 4. Status goes `approved` -> `generating` -> `completed`, and `deck_id` is set.
 5. `GET /jobs/{id}/cards` returns draft cards. Cards that failed verification or are duplicates start as `rejected`. Approve or reject in bulk with `POST /cards/review`, or edit one with `PATCH /cards/{id}`.
 
 A `failed` job has a readable `error`; `POST /jobs/{id}/retry` re-runs it from the phase that failed. Uploaded originals are deleted once cards exist (`SNAPNOTES_DELETE_ORIGINALS=0` to keep them), or on demand with `DELETE /documents/{id}`, which also removes every card that was never approved.
+
+### Growing a deck
+
+Three ways to add to a deck you already have:
+
+- **Add notes:** upload with `deck_id` (above). When the job finishes, its cards are drafts in that deck, the deck's name and topic are left alone, and `jobs.deck_id` points at it (`target_deck_id` on the job says it was asked to). A new card that repeats a **draft or approved** card already in the deck is stored as `rejected` with `duplicate_of` set to the existing card and the issue "Already in this deck." The match is the same strict rule used inside one upload (normalised fronts, `token_sort_ratio >= 95`), so a *reworded* question about the same fact is not caught. If the deck is deleted while the job is running, the job makes a new deck as usual.
+- **Merge:** `POST /decks/{id}/merge` with `{"from_deck_id": "..."}` moves every card of the other deck (any status) into this one and removes the other deck, in one transaction. Cards keep their ids, so review logs and schedules carry over untouched. Uploads that were headed for, or came from, the removed deck are re-pointed at this one. Merging a deck into itself is a 409, an unknown deck a 404. The response is `{"deck": ..., "moved": n}`.
+- **Type a card:** `POST /decks/{id}/cards` with `{"type": "basic" | "cloze", "front": "...", "back": "..."}` creates an **approved** card at once (nothing to review): `origin` is `manual`, `source_ref` is "Added by you", and it has no job. A basic card needs both sides; a cloze card needs a `{{c1::blank}}` in the front and may have an empty back. Problems come back as a 422 with a sentence. Anki exports tag these cards `source-manual` and say "Added by you"; the CSV `origin` column says `manual`.
 
 ### Export
 
@@ -146,11 +154,11 @@ A `failed` job has a readable `error`; `POST /jobs/{id}/retry` re-runs it from t
 
 The response carries `decks`, `cards` (with their `status`, so the device can drop cards that are no longer approved), `states` (the latest FSRS schedule per card), `deleted` (tombstones), a new `cursor`, `has_more`, and the database's `epoch` and `reset` flag (below). Keep calling with the returned cursor and epoch while `has_more` is true.
 
-- **Pull is cursor based.** A global change counter (`sync_counter`) is stamped onto every changed deck, card and schedule by database triggers, so no write path can forget it; deletions, including cascades, leave tombstones. Over-delivery is allowed (applying a row twice is harmless), losing a change is not.
+- **Pull is cursor based.** A global change counter (`sync_counter`) is stamped onto every changed deck, card and schedule by database triggers, so no write path can forget it; deletions, including cascades, leave tombstones. Losing a change is never allowed. A page that is cut short ends at one cursor for every kind of row, so changes always arrive in the order they happened: a merged deck's cards are moved before the deck is deleted, and a device drops a deck's cards when told the deck is gone, so that deletion must not arrive before the moves.
 - **Push is idempotent.** Review logs are keyed by a client-generated id, so a retried request never duplicates a review. A bad log (unknown card, rating outside 1-4, a date more than a day in the future) is listed in `rejected` and the rest of the batch is still applied.
 - **The device computes the schedule.** Each log carries the FSRS state after the review; the server stores the log and keeps the state of the most recent review per card (an older log never rewinds it). Cards always arrive together with their schedule.
 - **A device can tell when it is no longer talking to the database it synced with.** Every database has a random `epoch` created with it, sent back by the device on each request. If the epoch differs, or the device's cursor is ahead of anything this database has ever numbered (the server was rolled back), the response has `reset: true` and is a full download from zero. The device then discards its cached decks and cards (including cards the server no longer has), keeps its review history, and uploads all of it again: reviews the server lost are restored, reviews it still has are ignored as duplicates, and reviews of cards that no longer exist are rejected. This covers a rebuilt volume automatically. A restored snapshot has the *old* epoch, so after a restore run `python -m app.admin rotate-epoch` (see `DEPLOY.md`).
-- **Existing databases upgrade in place** (schema version 3, tracked with `PRAGMA user_version`); rows that predate sync are numbered oldest first.
+- **Existing databases upgrade in place** (schema version 4, tracked with `PRAGMA user_version`; version 4 added `jobs.target_deck_id`); rows that predate sync are numbered oldest first.
 
 ### Spend and safety limits
 

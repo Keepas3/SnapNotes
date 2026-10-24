@@ -9,6 +9,7 @@ from typing import Any, Iterable
 from app.core.db import Database
 from app.llm.client import UsageRow
 from app.llm.schemas import EvidenceItem, ReviewedCard, UnderstandResult
+from app.llm.verify import ALREADY_IN_DECK, find_duplicates_of_existing
 from app.store.library import new_id, now
 
 
@@ -38,7 +39,10 @@ class JobStore:
 
     # -- creation and lookup -------------------------------------------------------------
 
-    def create(self, *, doc_id: str, filename: str, kind: str, stored_names: list[str], auto_approve: bool) -> str:
+    def create(
+        self, *, doc_id: str, filename: str, kind: str, stored_names: list[str], auto_approve: bool, target_deck_id: str | None = None
+    ) -> str:
+        """`target_deck_id`: add the cards to this existing deck instead of making a new one (checked by the caller)."""
         job_id, ts = new_id(), now()
         with self.db.tx() as c:
             c.execute(
@@ -46,8 +50,8 @@ class JobStore:
                 (doc_id, filename, kind, json.dumps(stored_names), ts),
             )
             c.execute(
-                "INSERT INTO jobs(id, document_id, status, auto_approve, created_at, updated_at) VALUES (?,?,?,?,?,?)",
-                (job_id, doc_id, "queued", int(auto_approve), ts, ts),
+                "INSERT INTO jobs(id, document_id, status, auto_approve, target_deck_id, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
+                (job_id, doc_id, "queued", int(auto_approve), target_deck_id, ts, ts),
             )
         return job_id
 
@@ -128,22 +132,37 @@ class JobStore:
         return list(json.loads(row["understanding_json"]).get("suspect_claims") or [])
 
     def save_generation(self, job_id: str, reviewed: list[ReviewedCard]) -> str:
-        """Create the deck and its cards and complete the job in one transaction. Returns the deck id."""
-        deck_id, ts = new_id(), now()
+        """Write the cards and complete the job in one transaction. Returns the deck id.
+
+        The cards go into the deck the job was told to add to, if it still exists (its name is left alone, and a card that
+        repeats one already there is set aside). Otherwise a new deck is made, named after the notes."""
+        ts = now()
         card_ids = [new_id() for _ in reviewed]
         with self.db.tx() as c:
-            row = c.execute("SELECT understanding_json FROM jobs WHERE id = ?", (job_id,)).fetchone()
+            row = c.execute("SELECT understanding_json, target_deck_id FROM jobs WHERE id = ?", (job_id,)).fetchone()
             if row is None:
                 raise NotFound(job_id)
-            understanding = json.loads(row["understanding_json"]) if row["understanding_json"] else {}
-            name = (understanding.get("main_topic") or "New deck")[:80]
-            c.execute(
-                "INSERT INTO decks(id, name, topic, created_at, updated_at) VALUES (?,?,?,?,?)",
-                (deck_id, name, understanding.get("subject_area", ""), ts, ts),
-            )
-            for cid, rc in zip(card_ids, reviewed):
+            target = c.execute("SELECT id FROM decks WHERE id = ?", (row["target_deck_id"],)).fetchone() if row["target_deck_id"] else None
+            repeats: dict[int, str] = {}  # new card index -> the card already in the deck that it repeats
+            if target is not None:
+                deck_id = target["id"]
+                held = c.execute("SELECT id, front FROM cards WHERE deck_id = ? AND status IN ('draft', 'approved')", (deck_id,)).fetchall()
+                repeats = find_duplicates_of_existing([rc.card for rc in reviewed], [(r["id"], r["front"]) for r in held])
+                c.execute("UPDATE decks SET updated_at = ? WHERE id = ?", (ts, deck_id))
+            else:
+                deck_id = new_id()
+                understanding = json.loads(row["understanding_json"]) if row["understanding_json"] else {}
+                name = (understanding.get("main_topic") or "New deck")[:80]
+                c.execute(
+                    "INSERT INTO decks(id, name, topic, created_at, updated_at) VALUES (?,?,?,?,?)",
+                    (deck_id, name, understanding.get("subject_area", ""), ts, ts),
+                )
+            for i, (cid, rc) in enumerate(zip(card_ids, reviewed)):
                 card = rc.card
                 dup = card_ids[rc.duplicate_of] if rc.duplicate_of is not None else None
+                issue, keep = rc.issue, rc.keep
+                if i in repeats:
+                    dup, keep, issue = repeats[i], False, f"{issue} {ALREADY_IN_DECK}".strip()
                 c.execute(
                     "INSERT INTO cards(id, deck_id, job_id, type, front, back, origin, source_ref, source_snippet, tags_json,"
                     " difficulty, status, atomic, grounded, issue, duplicate_of, created_at, updated_at)"
@@ -152,8 +171,8 @@ class JobStore:
                         cid, deck_id, job_id, card.type, card.front, card.back, card.origin, card.source_ref,
                         card.source_snippet, json.dumps(card.tags), card.difficulty,
                         # Ungrounded cards and duplicates start out rejected; the client can still show them as "filtered".
-                        "draft" if rc.keep else "rejected",
-                        int(rc.atomic), int(rc.grounded), rc.issue, dup, ts, ts,
+                        "draft" if keep else "rejected",
+                        int(rc.atomic), int(rc.grounded), issue, dup, ts, ts,
                     ),
                 )
             c.execute("UPDATE jobs SET status = 'completed', stage = NULL, deck_id = ?, error = NULL, updated_at = ? WHERE id = ?", (deck_id, ts, job_id))

@@ -9,13 +9,13 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
 from starlette.concurrency import run_in_threadpool
 
-from app.api.deps import get_cfg, get_store, get_worker
+from app.api.deps import get_cfg, get_library, get_store, get_worker
 from app.api.models import UploadOut
 from app.core.config import Settings
 from app.ingest.loader import ALLOWED_SUFFIXES, IMAGE_TYPES, UnsupportedFileError, validate_file
 from app.pipeline.worker import JobWorker
 from app.store.jobs import JobStore
-from app.store.library import new_id
+from app.store.library import Library, new_id
 
 router = APIRouter(tags=["documents"])
 
@@ -41,14 +41,19 @@ def _kind(suffixes: set[str]) -> str:
 async def upload_document(
     files: list[UploadFile],
     auto_approve: bool = Form(False),
+    deck_id: str | None = Form(None, description="Add the new cards to this existing deck instead of making a new deck"),
     cfg: Settings = Depends(get_cfg),
     store: JobStore = Depends(get_store),
+    library: Library = Depends(get_library),
     worker: JobWorker = Depends(get_worker),
 ) -> UploadOut:
     if not files:
         raise HTTPException(400, "Attach at least one file")
     if len(files) > cfg.max_files_per_upload:
         raise HTTPException(400, f"At most {cfg.max_files_per_upload} files per upload")
+    deck_id = (deck_id or "").strip() or None  # an empty form field means "no deck chosen"
+    if deck_id is not None and await run_in_threadpool(library.get_deck, deck_id) is None:
+        raise HTTPException(404, "Deck not found")
 
     # Spend guard: bound how many jobs can be started per hour.
     since = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
@@ -87,7 +92,9 @@ async def upload_document(
         filename = shown if len(files) == 1 else f"{shown} (+{len(files) - 1} more)"
         kind = _kind({Path(n).suffix.lower() for n in stored})
         job_id = await run_in_threadpool(
-            lambda: store.create(doc_id=doc_id, filename=filename, kind=kind, stored_names=stored, auto_approve=auto_approve)
+            lambda: store.create(
+                doc_id=doc_id, filename=filename, kind=kind, stored_names=stored, auto_approve=auto_approve, target_deck_id=deck_id
+            )
         )
     except BaseException:
         shutil.rmtree(dest, ignore_errors=True)

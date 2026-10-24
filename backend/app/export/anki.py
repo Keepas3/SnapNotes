@@ -83,6 +83,8 @@ def source_html(card: dict[str, Any]) -> str:
         return f"From the web: {html_text(ref)}" if ref else "From the web"
     if card["origin"] == "ai":
         return f"From AI knowledge (not sourced): {html_text(ref)}" if ref else "From AI knowledge (not sourced)"
+    if card["origin"] == "manual":
+        return "Added by you"
     return f"From your notes: {html_text(ref)}" if ref else "From your notes"
 
 
