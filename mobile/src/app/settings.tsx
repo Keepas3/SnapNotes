@@ -7,6 +7,8 @@ import { ThemedText } from '@/components/themed-text';
 import { Banner, Button, Card, Centered, Chip, Screen, Spinner } from '@/components/ui';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { APPEARANCES } from '@/lib/appearance';
+import { useAppearance } from '@/lib/appearance-provider';
 import { confirm } from '@/lib/confirm';
 import { plural } from '@/lib/format';
 import { useSettings } from '@/lib/settings';
@@ -31,6 +33,7 @@ export default function SettingsScreen() {
 
 function SettingsForm() {
   const theme = useTheme();
+  const appearance = useAppearance();
   const { baseUrl, token, configured, save, clear } = useSettings();
   const { status: sync, sync: syncNow } = useSync();
   const newPerDay = useNewPerDay();
@@ -136,6 +139,18 @@ function SettingsForm() {
 
       {message ? <Banner tone={message.tone} message={message.text} /> : null}
       <Button title="Save and test connection" onPress={saveAndTest} loading={busy} />
+
+      <ThemedText type="heading" style={styles.sectionTitle}>
+        Appearance
+      </ThemedText>
+      <View style={styles.choices} accessibilityRole="radiogroup" accessibilityLabel="Appearance">
+        {APPEARANCES.map((a) => (
+          <Chip key={a.value} label={a.label} selected={appearance.preference === a.value} onPress={() => appearance.setPreference(a.value)} />
+        ))}
+      </View>
+      <ThemedText type="caption" themeColor="textSecondary">
+        Light or dark colours for the whole app. “Same as phone” follows your phone’s own light or dark setting.
+      </ThemedText>
 
       {configured ? (
         <>

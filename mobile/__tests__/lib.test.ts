@@ -1,5 +1,6 @@
 import { clozeAnswer, clozeQuestion, hasCloze, parseCloze } from '@/lib/cloze';
 import { deckSummary, domainOf, formatCost, plural, safeHttpUrl, splitCorrection, splitSuspectClaim } from '@/lib/format';
+import { APPEARANCES, parseAppearance, resolveScheme } from '@/lib/appearance';
 import {
   deckNameProblem,
   deleteDeckMessage,
@@ -134,6 +135,23 @@ describe('format', () => {
     );
     expect(newCardProblem({ type: 'basic', front: 'x'.repeat(MAX_CARD_TEXT), back: 'y' })).toBeNull();
     expect(newCardProblem({ type: 'basic', front: 'x'.repeat(MAX_CARD_TEXT + 1), back: 'y' })).toBe(`Use at most ${MAX_CARD_TEXT} characters on each side.`);
+  });
+
+  it('reads a saved appearance choice, treating anything unknown as "same as phone"', () => {
+    expect(parseAppearance('dark')).toBe('dark');
+    expect(parseAppearance('light')).toBe('light');
+    expect(parseAppearance('system')).toBe('system');
+    for (const bad of [null, undefined, '', 'Dark', 'blue', 7, {}]) expect(parseAppearance(bad)).toBe('system');
+    expect(APPEARANCES.map((a) => a.value)).toEqual(['system', 'light', 'dark']);
+  });
+
+  it('picks the colours: an explicit choice wins, otherwise the phone decides (light when it has no preference)', () => {
+    expect(resolveScheme('dark', 'light')).toBe('dark');
+    expect(resolveScheme('light', 'dark')).toBe('light');
+    expect(resolveScheme('system', 'dark')).toBe('dark');
+    expect(resolveScheme('system', 'light')).toBe('light');
+    expect(resolveScheme('system', null)).toBe('light');
+    expect(resolveScheme('system', undefined)).toBe('light');
   });
 
   it('shows decks in the order the user dragged them, with new decks first', () => {

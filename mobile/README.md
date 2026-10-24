@@ -71,6 +71,10 @@ Each deck on the home screen has two small buttons: the **✕** at the top right
 
 All of these need a connection, like rename and delete, because the server holds the library; studying stays offline.
 
+## Appearance
+
+**Settings → Appearance** chooses **Same as phone** (the default: light or dark follows the phone's own setting), **Light** or **Dark**. The choice applies to the whole app straight away and is remembered on this phone. The dark palette is the `dark` set in `src/constants/theme.ts`; the choice itself is in `src/lib/appearance.ts` and `appearance-provider.tsx`. The colours the system draws itself (alert dialogs, the keyboard) follow the choice too.
+
 ## Exporting a deck
 
 On a deck's page, **Export** sends the approved cards through the system share sheet (in the browser preview it downloads a file):
