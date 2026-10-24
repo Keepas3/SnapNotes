@@ -25,9 +25,11 @@ interface ScreenProps {
   footer?: ReactNode;
   refreshControl?: React.ReactElement<RefreshControlProps>;
   scroll?: boolean;
+  /** Set false while something is being dragged, so the page does not scroll under the finger. */
+  scrollEnabled?: boolean;
 }
 
-export function Screen({ children, footer, refreshControl, scroll = true }: ScreenProps) {
+export function Screen({ children, footer, refreshControl, scroll = true, scrollEnabled = true }: ScreenProps) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const body = <View style={styles.column}>{children}</View>;
@@ -38,6 +40,7 @@ export function Screen({ children, footer, refreshControl, scroll = true }: Scre
           style={styles.fill}
           contentContainerStyle={styles.scrollContent}
           refreshControl={refreshControl}
+          scrollEnabled={scrollEnabled}
           keyboardShouldPersistTaps="handled"
           contentInsetAdjustmentBehavior="automatic">
           {body}

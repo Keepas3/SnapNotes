@@ -9,6 +9,34 @@ const NOW = new Date(2026, 2, 10, 15, 0, 0);
 const plusMin = (n: number) => new Date(NOW.getTime() + n * 60_000);
 const plusDays = (n: number) => new Date(NOW.getTime() + n * 86_400_000);
 
+describe('LocalStore deck order', () => {
+  it('remembers the order the user arranged, and starts empty', async () => {
+    const { store } = await makeStore();
+    expect(await store.deckOrder()).toEqual([]);
+    await store.setDeckOrder(['b', 'a', 'c']);
+    expect(await store.deckOrder()).toEqual(['b', 'a', 'c']);
+    await store.setDeckOrder(['c']);
+    expect(await store.deckOrder()).toEqual(['c']);
+  });
+
+  it('reads damaged saved data as no order at all', async () => {
+    const { store } = await makeStore();
+    for (const bad of ['not json', '{"a":1}', '"text"']) {
+      await store.setMeta('deck_order', bad);
+      expect(await store.deckOrder()).toEqual([]);
+    }
+    await store.setMeta('deck_order', '["a", 7, null, "b"]');
+    expect(await store.deckOrder()).toEqual(['a', 'b']); // only the ids are kept
+  });
+
+  it('survives clearing the cached library, since it is only a preference', async () => {
+    const { store } = await makeStore();
+    await store.setDeckOrder(['b', 'a']);
+    await store.clearData();
+    expect(await store.deckOrder()).toEqual(['b', 'a']);
+  });
+});
+
 describe('LocalStore.applySync', () => {
   it('stores decks and approved cards, each starting as a new card', async () => {
     const { store } = await makeStore();

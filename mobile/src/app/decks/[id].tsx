@@ -115,7 +115,9 @@ export default function DeckScreen() {
           title: d.name,
           headerRight: () => (
             <Pressable accessibilityRole="button" accessibilityLabel="Deck settings" onPress={() => setSettingsOpen(true)} hitSlop={12}>
-              <ThemedText type="linkPrimary">Settings</ThemedText>
+              <ThemedText type="linkPrimary" style={styles.menuGlyph}>
+                ☰
+              </ThemedText>
             </Pressable>
           ),
         }}
@@ -187,6 +189,7 @@ export default function DeckScreen() {
 }
 
 const styles = StyleSheet.create({
+  menuGlyph: { fontSize: 24, lineHeight: 28 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two },
   badges: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two },
 });

@@ -1,6 +1,18 @@
 import { clozeAnswer, clozeQuestion, hasCloze, parseCloze } from '@/lib/cloze';
 import { deckSummary, domainOf, formatCost, plural, safeHttpUrl, splitCorrection, splitSuspectClaim } from '@/lib/format';
-import { deckNameProblem, deleteDeckMessage, MAX_CARD_TEXT, MAX_DECK_NAME, mergeCandidates, mergeDeckMessage, newCardProblem } from '@/lib/deck';
+import {
+  deckNameProblem,
+  deleteDeckMessage,
+  dragShift,
+  dragTarget,
+  MAX_CARD_TEXT,
+  MAX_DECK_NAME,
+  mergeCandidates,
+  mergeDeckMessage,
+  moveItem,
+  newCardProblem,
+  orderDecks,
+} from '@/lib/deck';
 import { originBadge, originLabel, sourceName } from '@/lib/origin';
 import { cardWarnings } from '@/lib/warnings';
 import { currentStepIndex, isActive, stepsFor } from '@/lib/steps';
@@ -122,6 +134,46 @@ describe('format', () => {
     );
     expect(newCardProblem({ type: 'basic', front: 'x'.repeat(MAX_CARD_TEXT), back: 'y' })).toBeNull();
     expect(newCardProblem({ type: 'basic', front: 'x'.repeat(MAX_CARD_TEXT + 1), back: 'y' })).toBe(`Use at most ${MAX_CARD_TEXT} characters on each side.`);
+  });
+
+  it('shows decks in the order the user dragged them, with new decks first', () => {
+    const decks = [{ id: 'new' }, { id: 'a' }, { id: 'b' }, { id: 'c' }]; // the default order: newest first
+    expect(orderDecks(decks, []).map((d) => d.id)).toEqual(['new', 'a', 'b', 'c']); // nothing dragged yet: unchanged
+    expect(orderDecks(decks, ['c', 'a', 'b']).map((d) => d.id)).toEqual(['new', 'c', 'a', 'b']); // a deck not in the saved order goes on top
+    expect(orderDecks(decks, ['gone', 'b', 'b', 'a']).map((d) => d.id)).toEqual(['new', 'c', 'b', 'a']); // unknown and repeated ids are ignored
+    expect(orderDecks([], ['a'])).toEqual([]);
+  });
+
+  it('moves one item to a new position without changing the original list', () => {
+    const list = ['a', 'b', 'c', 'd'];
+    expect(moveItem(list, 0, 2)).toEqual(['b', 'c', 'a', 'd']);
+    expect(moveItem(list, 3, 0)).toEqual(['d', 'a', 'b', 'c']);
+    expect(moveItem(list, 1, 1)).toEqual(list);
+    expect(moveItem(list, 1, 99)).toEqual(['a', 'c', 'd', 'b']); // past the end means last
+    expect(moveItem(list, 9, 0)).toEqual(list); // nothing to move
+    expect(list).toEqual(['a', 'b', 'c', 'd']);
+  });
+
+  it('works out where a dragged deck would land, and how the others make room', () => {
+    // three cards, 100 tall with a 10 gap
+    const rows = [
+      { y: 0, height: 100 },
+      { y: 110, height: 100 },
+      { y: 220, height: 100 },
+    ];
+    expect(dragTarget(rows, 0, 0)).toBe(0); // not moved
+    expect(dragTarget(rows, 0, 40)).toBe(0); // middle still above the next card's middle (160)
+    expect(dragTarget(rows, 0, 120)).toBe(1); // middle at 170, past card 1's middle
+    expect(dragTarget(rows, 0, 400)).toBe(2);
+    expect(dragTarget(rows, 2, -120)).toBe(1);
+    expect(dragTarget(rows, 2, -400)).toBe(0);
+    expect(dragTarget(rows, 5, 10)).toBe(5); // a row that is not there stays where it is
+
+    // holding the first card over the last slot: the other two slide up one card's height
+    expect([0, 1, 2].map((i) => dragShift(i, 0, 2, 110))).toEqual([0, -110, -110]);
+    // holding the last card over the first slot: the other two slide down
+    expect([0, 1, 2].map((i) => dragShift(i, 2, 0, 110))).toEqual([110, 110, 0]);
+    expect([0, 1, 2].map((i) => dragShift(i, 1, 1, 110))).toEqual([0, 0, 0]); // held over its own place: nothing moves
   });
 
   it('offers every other deck for a merge, in alphabetical order', () => {

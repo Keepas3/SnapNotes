@@ -1,21 +1,22 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { Redirect, Stack, router, useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { Pressable, RefreshControl, StyleSheet, View } from 'react-native';
 
 import { ApiError } from '@/api/client';
 import { useDecks, useDeleteDeck, useJobs } from '@/api/hooks';
 import type { Job } from '@/api/types';
 import { DeckSettingsSheet } from '@/components/deck-settings';
+import { DraggableRow } from '@/components/draggable-row';
 import { ThemedText } from '@/components/themed-text';
 import { Badge, Banner, Button, Card, Centered, EmptyState, IconButton, Screen, Section, Spinner } from '@/components/ui';
 import { Spacing } from '@/constants/theme';
 import { confirm } from '@/lib/confirm';
-import { deleteDeckMessage } from '@/lib/deck';
+import { deleteDeckMessage, dragShift, dragTarget, moveItem, orderDecks, type RowBox } from '@/lib/deck';
 import { plural } from '@/lib/format';
 import { useSettings } from '@/lib/settings';
 import { JOB_STATUS_LABEL } from '@/lib/steps';
-import { useLocalDecks, usePendingReviews } from '@/study/hooks';
+import { useDeckOrder, useLocalDecks, usePendingReviews, useSetDeckOrder } from '@/study/hooks';
 import type { DeckSummary } from '@/study/store';
 import { LOCAL_KEY, useSync } from '@/sync/provider';
 
@@ -34,8 +35,10 @@ export default function Home() {
 
 function HeaderSettingsButton() {
   return (
-    <Pressable accessibilityRole="button" accessibilityLabel="Settings" onPress={() => router.push('/settings')} hitSlop={12}>
-      <ThemedText type="linkPrimary">Settings</ThemedText>
+    <Pressable accessibilityRole="button" accessibilityLabel="Settings" onPress={() => router.push('/settings')} hitSlop={12} style={styles.menuButton}>
+      <ThemedText type="linkPrimary" style={styles.menuGlyph}>
+        ☰
+      </ThemedText>
     </Pressable>
   );
 }
@@ -47,7 +50,15 @@ function HomeContent() {
   const jobs = useJobs(); // online only: uploads in progress
   const local = useLocalDecks(); // on-device: what can be studied, with or without a connection
   const pending = usePendingReviews();
+  const savedOrder = useDeckOrder(); // the order the user dragged the decks into, kept on this phone
+  const saveOrder = useSetDeckOrder();
   const [refreshing, setRefreshing] = useState(false);
+  // While a deck is being dragged: which one, where it would land, how far the finger moved, and how far the others slide.
+  const [drag, setDrag] = useState<{ from: number; to: number; dy: number; step: number } | null>(null);
+  const [held, setHeld] = useState(false); // a finger has been held on a deck long enough that it may be dragged: the page must not scroll
+  // Each deck card's height, filled in as they are laid out. Heights only: a card's position is worked out from them, because a
+  // layout event is not sent when a card merely moves (it would be stale after a reorder).
+  const heights = useRef(new Map<string, number>());
 
   // Whenever Home comes into view, refresh what the phone knows and catch up with the server.
   useFocusEffect(
@@ -65,17 +76,45 @@ function HomeContent() {
 
   const inProgress = (jobs.data ?? []).filter((j) => j.status !== 'completed');
   const draftCounts = new Map((serverDecks.data ?? []).map((d) => [d.id, d.counts.draft]));
-  const decks = local.data ?? [];
+  const decks = orderDecks(local.data ?? [], savedOrder.data ?? []);
   const waiting = decks.reduce((n, d) => n + d.new + d.learning + d.review, 0);
+
+  /** Where each card sits, top to bottom in the order shown now (relative to the first). */
+  function rowBoxes(): RowBox[] {
+    let y = 0;
+    return decks.map((d) => {
+      const height = heights.current.get(d.id) ?? 0;
+      const box = { y, height };
+      y += height + DECK_GAP;
+      return box;
+    });
+  }
+
+  function dragStart(from: number) {
+    setDrag({ from, to: from, dy: 0, step: (rowBoxes()[from]?.height ?? 0) + DECK_GAP });
+  }
+  function dragMove(from: number, dy: number) {
+    setDrag((d) => (d ? { ...d, from, dy, to: dragTarget(rowBoxes(), from, dy) } : d));
+  }
+  function dragEnd(from: number, dy: number) {
+    const to = dragTarget(rowBoxes(), from, dy);
+    setDrag(null);
+    if (to !== from) saveOrder.mutate(moveItem(decks, from, to).map((d) => d.id));
+  }
+  function nudge(from: number, direction: -1 | 1) {
+    const to = from + direction;
+    if (to >= 0 && to < decks.length) saveOrder.mutate(moveItem(decks, from, to).map((d) => d.id));
+  }
 
   const onlineError = serverDecks.error ?? jobs.error;
   const offline = (onlineError instanceof ApiError && onlineError.isNetwork) || status.offline;
 
   return (
     <Screen
+      scrollEnabled={drag === null && !held}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
       footer={<Button title="New deck from notes" variant={waiting > 0 ? 'secondary' : 'primary'} onPress={() => router.push('/new')} />}>
-      <Stack.Screen options={{ title: 'SnapNotes', headerRight: HeaderSettingsButton }} />
+      <Stack.Screen options={{ title: 'SnapNotes', headerLeft: HeaderSettingsButton }} />
 
       {storeError ? <Banner message={`Offline study is unavailable: ${storeError}`} /> : null}
       {offline ? (
@@ -108,7 +147,32 @@ function HomeContent() {
             message="Upload a PDF, slides, a document, or photos of your notes and SnapNotes will turn them into flashcards."
           />
         ) : (
-          decks.map((deck) => <DeckRow key={deck.id} deck={deck} drafts={draftCounts.get(deck.id) ?? 0} />)
+          decks.map((deck, i) => (
+            // Press and hold a deck, then drag: the held deck follows the finger and the ones it passes make room.
+            <DraggableRow
+              key={deck.id}
+              onLayout={(e) => heights.current.set(deck.id, e.nativeEvent.layout.height)}
+              onHold={() => setHeld(true)}
+              onLift={() => dragStart(i)}
+              onMove={(dy) => dragMove(i, dy)}
+              onDrop={(dy) => {
+                dragEnd(i, dy);
+                setHeld(false);
+              }}
+              onCancel={() => {
+                setDrag(null);
+                setHeld(false);
+              }}
+              style={
+                drag === null
+                  ? undefined
+                  : drag.from === i
+                    ? { transform: [{ translateY: drag.dy }], zIndex: 10, opacity: 0.92 }
+                    : { transform: [{ translateY: dragShift(i, drag.from, drag.to, drag.step) }] }
+              }>
+              <DeckRow deck={deck} drafts={draftCounts.get(deck.id) ?? 0} onMove={decks.length > 1 ? (direction) => nudge(i, direction) : undefined} />
+            </DraggableRow>
+          ))
         )}
       </Section>
 
@@ -163,7 +227,7 @@ function JobRow({ job }: { job: Job }) {
   );
 }
 
-function DeckRow({ deck, drafts }: { deck: DeckSummary; drafts: number }) {
+function DeckRow({ deck, drafts, onMove }: { deck: DeckSummary; drafts: number; onMove?: (direction: -1 | 1) => void }) {
   const queryClient = useQueryClient();
   const { sync } = useSync();
   const remove = useDeleteDeck();
@@ -195,10 +259,12 @@ function DeckRow({ deck, drafts }: { deck: DeckSummary; drafts: number }) {
     <Card>
       {/* Buttons and the tappable parts are siblings: nesting one pressable in another is invalid on the web. */}
       <View style={styles.deckHeader}>
-        <IconButton glyph={'⚙︎'} label={`Settings for ${deck.name}`} onPress={() => setSettingsOpen(true)} />
+        <IconButton glyph="☰" label={`Settings for ${deck.name}`} onPress={() => setSettingsOpen(true)} />
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={`${deck.name}, ${plural(deck.total, 'card')}`}
+          accessibilityActions={onMove ? [{ name: 'decrement', label: 'Move up' }, { name: 'increment', label: 'Move down' }] : undefined}
+          onAccessibilityAction={(e) => onMove?.(e.nativeEvent.actionName === 'decrement' ? -1 : 1)}
           onPress={open}
           style={({ pressed }) => [styles.flex, pressed && styles.pressed]}>
           <ThemedText type="heading" numberOfLines={1}>
@@ -229,7 +295,12 @@ function DeckRow({ deck, drafts }: { deck: DeckSummary; drafts: number }) {
   );
 }
 
+/** The space between deck cards in the list; the same as the gap `Section` puts between its children. */
+const DECK_GAP = Spacing.two;
+
 const styles = StyleSheet.create({
+  menuButton: { paddingHorizontal: Spacing.two, paddingVertical: Spacing.one },
+  menuGlyph: { fontSize: 24, lineHeight: 28 },
   rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.two },
   deckHeader: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
   flex: { flex: 1 },

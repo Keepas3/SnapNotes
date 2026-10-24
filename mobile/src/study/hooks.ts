@@ -54,6 +54,28 @@ export function useSetNewPerDay() {
   });
 }
 
+/** The order the user dragged their decks into, kept on this phone. */
+export function useDeckOrder() {
+  const { store } = useSync();
+  return useQuery<string[]>({
+    queryKey: [...LOCAL_KEY, 'deckOrder'],
+    queryFn: () => store!.deckOrder(),
+    enabled: store !== null,
+  });
+}
+
+export function useSetDeckOrder() {
+  const { store } = useSync();
+  const qc = useQueryClient();
+  const key = [...LOCAL_KEY, 'deckOrder'];
+  return useMutation({
+    mutationFn: (ids: string[]) => store!.setDeckOrder(ids),
+    // Show the new order at once; the save to the phone's database follows.
+    onMutate: (ids) => qc.setQueryData(key, ids),
+    onSettled: () => qc.invalidateQueries({ queryKey: key }),
+  });
+}
+
 export function useInvalidateLocal() {
   const qc = useQueryClient();
   return () => qc.invalidateQueries({ queryKey: LOCAL_KEY });

@@ -67,6 +67,8 @@ Each deck on the home screen has two small buttons: the **✕** at the top right
 - **Type a card.** One question and answer you write yourself, either "Question and answer" or "Fill in the blank" (wrap the answer like `{{c1::answer}}`; an explanation is optional). It is approved straight away, labelled "Added by you", and can be studied after the sync that starts when you save.
 - **Merge another deck into this one.** Pick a deck from the list; after an "are you sure" that says how many cards move, all its cards (including ones still waiting for review) join this deck, your study progress on them is kept, and the other deck is removed. This deck keeps its title. It cannot be undone.
 
+**Reordering:** with two or more decks, press and hold anywhere on a deck card for about half a second (a phone with a vibration motor gives a small buzz), then drag up or down. The other decks slide out of the way and the deck lands where you let go (a drag shorter than half a card changes nothing). A quick tap still opens the deck, buttons on the card still work, and scrolling the page is unaffected until a hold is up. Screen readers get "Move up" and "Move down" actions on the deck's title. The order is saved on this phone only (it is a preference, not part of the library, so it is not synced); a deck you have not placed yet, such as a new one, appears at the top. The page does not scroll while you hold a deck, so with a very long list, drag in steps.
+
 All of these need a connection, like rename and delete, because the server holds the library; studying stays offline.
 
 ## Exporting a deck

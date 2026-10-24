@@ -26,6 +26,51 @@ export function newCardProblem(card: NewCard): string | null {
   return back ? null : 'Write the back of the card.';
 }
 
+/**
+ * The decks in the order the user dragged them into. A deck that is not in `order` yet (a new one) comes first, as new decks
+ * always have; ids in `order` for decks that no longer exist are ignored, and so is an id listed twice.
+ */
+export function orderDecks<T extends { id: string }>(decks: T[], order: string[]): T[] {
+  const byId = new Map(decks.map((d) => [d.id, d]));
+  const placed: T[] = [];
+  for (const id of new Set(order)) {
+    const deck = byId.get(id);
+    if (deck) placed.push(deck);
+  }
+  const taken = new Set(placed.map((d) => d.id));
+  return [...decks.filter((d) => !taken.has(d.id)), ...placed];
+}
+
+/** A copy of `items` with the one at `from` moved to index `to`. */
+export function moveItem<T>(items: T[], from: number, to: number): T[] {
+  if (from === to || from < 0 || from >= items.length) return items.slice();
+  const copy = items.slice();
+  const [moved] = copy.splice(from, 1);
+  copy.splice(Math.max(0, Math.min(to, copy.length)), 0, moved);
+  return copy;
+}
+
+/** Where a row sits on screen (its layout, before any drag offset). */
+export interface RowBox {
+  y: number;
+  height: number;
+}
+
+/** The index the dragged row would take if dropped now: how many of the other rows have their middle above its middle. */
+export function dragTarget(rows: RowBox[], from: number, dy: number): number {
+  if (!rows[from]) return from;
+  const middle = rows[from].y + rows[from].height / 2 + dy;
+  return rows.reduce((above, row, i) => (i !== from && row.y + row.height / 2 < middle ? above + 1 : above), 0);
+}
+
+/** How far row `i` slides out of the way while row `from` is held over index `to`; `step` is one row's height plus the gap. */
+export function dragShift(i: number, from: number, to: number, step: number): number {
+  if (i === from) return 0;
+  if (from < to && i > from && i <= to) return -step;
+  if (from > to && i >= to && i < from) return step;
+  return 0;
+}
+
 /** The decks another deck could absorb, in alphabetical order; the deck itself is left out. */
 export function mergeCandidates<T extends { id: string; name: string }>(decks: T[], selfId: string): T[] {
   return decks.filter((d) => d.id !== selfId).sort((a, b) => a.name.localeCompare(b.name));

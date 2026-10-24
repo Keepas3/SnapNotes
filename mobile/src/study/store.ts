@@ -101,6 +101,20 @@ export class LocalStore {
     return this.setMeta('new_per_day', String(Math.max(0, Math.min(500, Math.round(n)))));
   }
 
+  /** The deck ids in the order the user arranged them on this phone (empty until they drag one). */
+  async deckOrder(): Promise<string[]> {
+    try {
+      const parsed: unknown = JSON.parse((await this.getMeta('deck_order')) ?? '[]');
+      return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : [];
+    } catch {
+      return [];
+    }
+  }
+
+  setDeckOrder(ids: string[]): Promise<void> {
+    return this.setMeta('deck_order', JSON.stringify(ids));
+  }
+
   /**
    * Ties the local data to one server. The first call records it; a different server means the cached decks and
    * cursor belong to someone else, so they are cleared. Returns what happened.
