@@ -34,7 +34,14 @@ export function DraggableRow({ children, style, onLayout, onHold, onLift, onMove
   useEffect(() => {
     latest.current = { onHold, onLift, onMove, onDrop, onCancel };
   });
-  const state = useRef({ armed: false, active: false, hold: null as ReturnType<typeof setTimeout> | null, giveUp: null as ReturnType<typeof setTimeout> | null });
+  const state = useRef({
+    armed: false,
+    active: false,
+    /** Where on the page the finger first touched. The drag distance is measured from here, not from where the drag was picked up. */
+    startY: 0,
+    hold: null as ReturnType<typeof setTimeout> | null,
+    giveUp: null as ReturnType<typeof setTimeout> | null,
+  });
 
   const responder = useMemo(() => {
     const s = state.current;
@@ -56,8 +63,9 @@ export function DraggableRow({ children, style, onLayout, onHold, onLift, onMove
       release,
       handlers: PanResponder.create({
         // Seen on the way down, before any child gets the touch; returning false leaves the touch to the buttons inside.
-        onStartShouldSetPanResponderCapture: () => {
+        onStartShouldSetPanResponderCapture: (e) => {
           release();
+          s.startY = e.nativeEvent.pageY;
           // A mouse (the browser preview) has no touch-end event on the row, so listen for the button coming up anywhere.
           if (Platform.OS === 'web') globalThis.addEventListener?.('pointerup', () => !s.active && release(), { once: true });
           s.hold = setTimeout(() => {
@@ -81,12 +89,14 @@ export function DraggableRow({ children, style, onLayout, onHold, onLift, onMove
           s.active = true;
           latest.current.onLift();
         },
-        onPanResponderMove: (_, g) => latest.current.onMove(g.dy),
+        // The gesture tracker restarts its own distance count when it takes over (after the hold), which would drop the first bit of
+        // movement and leave the row trailing the finger, so the distance is taken from where the finger first touched.
+        onPanResponderMove: (_, g) => latest.current.onMove(g.moveY - s.startY),
         onPanResponderRelease: (_, g) => {
           clearTimers();
           const wasActive = s.active;
           s.armed = s.active = false;
-          if (wasActive) latest.current.onDrop(g.dy);
+          if (wasActive) latest.current.onDrop(g.moveY - s.startY);
         },
         onPanResponderTerminate: release,
       }),

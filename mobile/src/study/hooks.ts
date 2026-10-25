@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { LOCAL_KEY, useSync } from '@/sync/provider';
 
-import type { DeckSummary, StudyCounts } from './store';
+import type { DeckSummary, FolderSummary, StudyCounts, StudyScope } from './store';
 
 /** Reads from the on-device database. They work offline and refetch after every sync or study answer. */
 
@@ -16,11 +16,23 @@ export function useLocalDecks() {
   });
 }
 
-export function useStudyCounts(deckId: string | null) {
+/** The folders on this phone, A to Z, with how many decks and cards each holds. */
+export function useLocalFolders() {
+  const { store } = useSync();
+  return useQuery<FolderSummary[]>({
+    queryKey: [...LOCAL_KEY, 'folders'],
+    queryFn: () => store!.listFolders(),
+    enabled: store !== null,
+    staleTime: 0,
+  });
+}
+
+/** What is due and new for one deck, a whole folder (`{ folderId }`) or everything (null). */
+export function useStudyCounts(scope: StudyScope) {
   const { store } = useSync();
   return useQuery<StudyCounts>({
-    queryKey: [...LOCAL_KEY, 'counts', deckId],
-    queryFn: async () => store!.counts(deckId, new Date(), await store!.newPerDay()),
+    queryKey: [...LOCAL_KEY, 'counts', typeof scope === 'object' && scope !== null ? `folder:${scope.folderId}` : scope],
+    queryFn: async () => store!.counts(scope, new Date(), await store!.newPerDay()),
     enabled: store !== null,
     staleTime: 0,
   });
@@ -72,6 +84,27 @@ export function useSetDeckOrder() {
     mutationFn: (ids: string[]) => store!.setDeckOrder(ids),
     // Show the new order at once; the save to the phone's database follows.
     onMutate: (ids) => qc.setQueryData(key, ids),
+    onSettled: () => qc.invalidateQueries({ queryKey: key }),
+  });
+}
+
+/** The folders collapsed on Home, kept on this phone. */
+export function useClosedFolders() {
+  const { store } = useSync();
+  return useQuery<string[]>({
+    queryKey: [...LOCAL_KEY, 'closedFolders'],
+    queryFn: () => store!.closedFolders(),
+    enabled: store !== null,
+  });
+}
+
+export function useSetClosedFolders() {
+  const { store } = useSync();
+  const qc = useQueryClient();
+  const key = [...LOCAL_KEY, 'closedFolders'];
+  return useMutation({
+    mutationFn: (ids: string[]) => store!.setClosedFolders(ids),
+    onMutate: (ids) => qc.setQueryData(key, ids), // open or close it at once; the save follows
     onSettled: () => qc.invalidateQueries({ queryKey: key }),
   });
 }

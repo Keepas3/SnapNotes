@@ -95,10 +95,21 @@ export interface NewCard {
   back: string;
 }
 
+/** A folder that groups decks (Biology > Bio I, Bio II). `deck_count` counts the decks filed in it. */
+export interface Folder {
+  id: string;
+  name: string;
+  deck_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Deck {
   id: string;
   name: string;
   topic: string;
+  /** The folder this deck is filed in; absent from older servers, null when it is not in one. */
+  folder_id?: string | null;
   counts: Record<CardStatus, number>;
   created_at: string;
   updated_at: string;
@@ -173,10 +184,12 @@ export interface SyncResponse {
   accepted: number;
   duplicates: number;
   rejected: { id: string; reason: string }[];
-  decks: { id: string; name: string; topic: string; updated_at: string }[];
+  /** Absent from servers that predate folders. */
+  folders?: { id: string; name: string; updated_at: string }[];
+  decks: { id: string; name: string; topic: string; folder_id?: string | null; updated_at: string }[];
   cards: SyncCard[];
   states: { card_id: string; last_review: string; state: FsrsState }[];
-  deleted: { kind: 'deck' | 'card'; id: string }[];
+  deleted: { kind: 'deck' | 'card' | 'folder'; id: string }[];
 }
 
 /** A local file chosen for upload (from the document picker, camera or photo library). */

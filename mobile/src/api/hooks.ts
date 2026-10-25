@@ -13,6 +13,7 @@ export const keys = {
   evidence: (id: string) => ['evidence', id] as const,
   jobCards: (id: string, status?: CardStatus) => ['jobCards', id, status ?? 'all'] as const,
   decks: ['decks'] as const,
+  folders: ['folders'] as const,
   deck: (id: string) => ['deck', id] as const,
   deckCards: (id: string, status?: CardStatus) => ['deckCards', id, status ?? 'all'] as const,
 };
@@ -135,6 +136,47 @@ export function useDeleteDeck() {
       qc.invalidateQueries({ queryKey: keys.jobs });
     },
   });
+}
+
+/** The folders on the server (online only; Home reads the phone's own copy). */
+export function useFolders() {
+  const api = useApi();
+  return useQuery({ queryKey: keys.folders, queryFn: () => api.listFolders() });
+}
+
+/** Folders and decks change together (a deck's folder, a folder's deck count), so every folder change refreshes both lists. */
+function useRefreshAfterFolderChange() {
+  const qc = useQueryClient();
+  return () => {
+    qc.invalidateQueries({ queryKey: keys.folders });
+    qc.invalidateQueries({ queryKey: keys.decks });
+    qc.invalidateQueries({ queryKey: ['deck'] });
+  };
+}
+
+export function useCreateFolder() {
+  const api = useApi();
+  const refresh = useRefreshAfterFolderChange();
+  return useMutation({ mutationFn: (name: string) => api.createFolder(name), onSuccess: refresh });
+}
+
+export function useRenameFolder() {
+  const api = useApi();
+  const refresh = useRefreshAfterFolderChange();
+  return useMutation({ mutationFn: ({ id, name }: { id: string; name: string }) => api.renameFolder(id, name), onSuccess: refresh });
+}
+
+export function useDeleteFolder() {
+  const api = useApi();
+  const refresh = useRefreshAfterFolderChange();
+  return useMutation({ mutationFn: (id: string) => api.deleteFolder(id), onSuccess: refresh });
+}
+
+/** `folderId` null takes the deck out of its folder. */
+export function useSetDeckFolder() {
+  const api = useApi();
+  const refresh = useRefreshAfterFolderChange();
+  return useMutation({ mutationFn: ({ deckId, folderId }: { deckId: string; folderId: string | null }) => api.setDeckFolder(deckId, folderId), onSuccess: refresh });
 }
 
 /** Move another deck's cards into `intoId` and remove that deck. The decks, their cards and the uploads that pointed at them all change. */

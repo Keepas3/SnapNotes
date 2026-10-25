@@ -9,7 +9,7 @@ from app.api.models import CardIn, CardOut, CardStatus, DeckIn, DeckOut, DeckPat
 from app.export import content_disposition, safe_filename_stem
 from app.export.anki import build_apkg
 from app.export.csv_export import build_csv
-from app.store.library import Library
+from app.store.library import FolderNotFound, Library
 
 router = APIRouter(prefix="/decks", tags=["decks"])
 
@@ -37,6 +37,13 @@ def update_deck(deck_id: str, body: DeckPatch, library: Library = Depends(get_li
     deck = library.update_deck(deck_id, name=body.name, topic=body.topic)
     if deck is None:
         raise HTTPException(404, "Deck not found")
+    if "folder_id" in body.model_fields_set:  # sent, possibly as null: file it, or take it out
+        try:
+            deck = library.set_deck_folder(deck_id, body.folder_id)
+        except FolderNotFound as exc:
+            raise HTTPException(404, "Folder not found") from exc
+        if deck is None:
+            raise HTTPException(404, "Deck not found")
     return deck
 
 

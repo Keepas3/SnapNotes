@@ -183,7 +183,7 @@ export default function DeckScreen() {
       <Button title="Delete deck" variant="ghost" onPress={onDelete} loading={remove.isPending} />
 
       <CardEditor card={editing} onClose={() => setEditing(null)} />
-      <DeckSettingsSheet deck={settingsOpen ? { id: d.id, name: d.name } : null} onClose={() => setSettingsOpen(false)} onChanged={refreshPhone} />
+      <DeckSettingsSheet deck={settingsOpen ? { id: d.id, name: d.name, folderId: d.folder_id } : null} onClose={() => setSettingsOpen(false)} onChanged={refreshPhone} />
     </Screen>
   );
 }

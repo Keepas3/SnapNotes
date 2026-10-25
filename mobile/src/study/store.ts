@@ -32,8 +32,29 @@ export interface DeckSummary extends StudyCounts {
   id: string;
   name: string;
   topic: string;
+  /** The folder the deck is filed in, or null. */
+  folder_id: string | null;
   updated_at: string;
   total: number;
+}
+
+/** A folder with how much it holds; what is due in it comes from `counts` with the folder as the scope. */
+export interface FolderSummary {
+  id: string;
+  name: string;
+  updated_at: string;
+  decks: number;
+  total: number;
+}
+
+/** What to study or count: one deck (its id), every deck in a folder, or everything (null). */
+export type StudyScope = string | { folderId: string } | null;
+
+/** The SQL that narrows a query on `cards` to a scope, with its arguments. */
+function scopeClause(scope: StudyScope): { sql: string; args: SqlValue[] } {
+  if (scope === null) return { sql: '', args: [] };
+  if (typeof scope === 'string') return { sql: ' AND deck_id = ?', args: [scope] };
+  return { sql: ' AND deck_id IN (SELECT id FROM decks WHERE folder_id = ?)', args: [scope.folderId] };
 }
 
 interface CardRow {
@@ -101,18 +122,32 @@ export class LocalStore {
     return this.setMeta('new_per_day', String(Math.max(0, Math.min(500, Math.round(n)))));
   }
 
-  /** The deck ids in the order the user arranged them on this phone (empty until they drag one). */
-  async deckOrder(): Promise<string[]> {
+  /** A saved list of ids; damaged or missing data reads as an empty list. */
+  private async idList(key: string): Promise<string[]> {
     try {
-      const parsed: unknown = JSON.parse((await this.getMeta('deck_order')) ?? '[]');
+      const parsed: unknown = JSON.parse((await this.getMeta(key)) ?? '[]');
       return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : [];
     } catch {
       return [];
     }
   }
 
+  /** The deck ids in the order the user arranged them on this phone (empty until they drag one). */
+  deckOrder(): Promise<string[]> {
+    return this.idList('deck_order');
+  }
+
   setDeckOrder(ids: string[]): Promise<void> {
     return this.setMeta('deck_order', JSON.stringify(ids));
+  }
+
+  /** The folders the user has collapsed on Home (a preference of this phone; folders start open). */
+  closedFolders(): Promise<string[]> {
+    return this.idList('folders_closed');
+  }
+
+  setClosedFolders(ids: string[]): Promise<void> {
+    return this.setMeta('folders_closed', JSON.stringify(ids));
   }
 
   /**
@@ -133,6 +168,7 @@ export class LocalStore {
       await tx.run('DELETE FROM review_logs');
       await tx.run('DELETE FROM cards');
       await tx.run('DELETE FROM decks');
+      await tx.run('DELETE FROM folders');
       await tx.run("DELETE FROM meta WHERE key IN ('cursor', 'epoch', 'server_url')");
     });
   }
@@ -150,8 +186,8 @@ export class LocalStore {
   async listDecks(now: Date, newPerDay: number): Promise<DeckSummary[]> {
     const end = studyDayEnd(now).toISOString();
     const remaining = await this.newRemaining(now, newPerDay);
-    const rows = await this.db.all<{ id: string; name: string; topic: string; updated_at: string; total: number; new_total: number; learning: number; review: number }>(
-      `SELECT d.id, d.name, d.topic, d.updated_at,
+    const rows = await this.db.all<{ id: string; name: string; topic: string; folder_id: string | null; updated_at: string; total: number; new_total: number; learning: number; review: number }>(
+      `SELECT d.id, d.name, d.topic, d.folder_id, d.updated_at,
               COUNT(c.id) AS total,
               COALESCE(SUM(c.state = 0), 0) AS new_total,
               COALESCE(SUM(c.state IN (1, 3) AND c.due <= ?), 0) AS learning,
@@ -163,16 +199,24 @@ export class LocalStore {
     return rows.map(({ new_total, ...r }) => ({ ...r, new: Math.min(new_total, remaining) }));
   }
 
-  /** Counts for one deck, or for every deck when `deckId` is null. */
-  async counts(deckId: string | null, now: Date, newPerDay: number): Promise<StudyCounts> {
+  /** The folders on this phone, A to Z, with how many decks and cards each holds. */
+  async listFolders(): Promise<FolderSummary[]> {
+    return this.db.all<FolderSummary>(
+      `SELECT f.id, f.name, f.updated_at, COUNT(DISTINCT d.id) AS decks, COUNT(c.id) AS total
+         FROM folders f LEFT JOIN decks d ON d.folder_id = f.id LEFT JOIN cards c ON c.deck_id = d.id
+        GROUP BY f.id ORDER BY lower(f.name), f.id`,
+    );
+  }
+
+  /** Counts for one deck, a whole folder, or every deck (null). The daily new-card limit is shared, so a folder is counted as a whole, not summed. */
+  async counts(scope: StudyScope, now: Date, newPerDay: number): Promise<StudyCounts> {
     const end = studyDayEnd(now).toISOString();
-    const scope = deckId ? ' AND deck_id = ?' : '';
-    const extra: SqlValue[] = deckId ? [deckId] : [];
+    const { sql: scoped, args: extra } = scopeClause(scope);
     const row = await this.db.first<{ new_total: number; learning: number; review: number }>(
       `SELECT COALESCE(SUM(state = 0), 0) AS new_total,
               COALESCE(SUM(state IN (1, 3) AND due <= ?), 0) AS learning,
               COALESCE(SUM(state = 2 AND due <= ?), 0) AS review
-         FROM cards WHERE 1 = 1${scope}`,
+         FROM cards WHERE 1 = 1${scoped}`,
       [end, end, ...extra],
     );
     const remaining = await this.newRemaining(now, newPerDay);
@@ -183,13 +227,12 @@ export class LocalStore {
    * The next card to study: learning cards that are due, then reviews due today, then new cards (within the daily
    * budget), and finally learning cards due in the next few minutes. Null means the session is finished.
    */
-  async nextCard(deckId: string | null, now: Date, newPerDay: number): Promise<{ card: LocalCard | null; counts: StudyCounts }> {
-    const scope = deckId ? ' AND deck_id = ?' : '';
-    const extra: SqlValue[] = deckId ? [deckId] : [];
+  async nextCard(scope: StudyScope, now: Date, newPerDay: number): Promise<{ card: LocalCard | null; counts: StudyCounts }> {
+    const { sql: scoped, args: extra } = scopeClause(scope);
     const pick = async (where: string, args: SqlValue[], order: string) =>
-      this.db.first<CardRow>(`SELECT * FROM cards WHERE ${where}${scope} ORDER BY ${order} LIMIT 1`, [...args, ...extra]);
+      this.db.first<CardRow>(`SELECT * FROM cards WHERE ${where}${scoped} ORDER BY ${order} LIMIT 1`, [...args, ...extra]);
 
-    const counts = await this.counts(deckId, now, newPerDay);
+    const counts = await this.counts(scope, now, newPerDay);
     let row = await pick('state IN (1, 3) AND due <= ?', [now.toISOString()], 'due');
     row ??= await pick('state = 2 AND due <= ?', [studyDayEnd(now).toISOString()], 'due');
     if (!row && counts.new > 0) row = await pick('state = 0', [], 'created_at, id');
@@ -198,8 +241,9 @@ export class LocalStore {
   }
 
   /** Earliest time any already-studied card comes due again, for the "all caught up" screen. */
-  async nextDue(deckId: string | null): Promise<string | null> {
-    const row = await this.db.first<{ due: string | null }>(`SELECT MIN(due) AS due FROM cards WHERE state != 0${deckId ? ' AND deck_id = ?' : ''}`, deckId ? [deckId] : []);
+  async nextDue(scope: StudyScope): Promise<string | null> {
+    const { sql: scoped, args } = scopeClause(scope);
+    const row = await this.db.first<{ due: string | null }>(`SELECT MIN(due) AS due FROM cards WHERE state != 0${scoped}`, args);
     return row?.due ?? null;
   }
 
@@ -260,13 +304,22 @@ export class LocalStore {
         // duplicate (reviews carry client-made ids).
         await tx.run('DELETE FROM cards');
         await tx.run('DELETE FROM decks');
+        await tx.run('DELETE FROM folders');
         await tx.run('UPDATE review_logs SET synced = 0');
+      }
+
+      for (const f of res.folders ?? []) {
+        await tx.run('INSERT INTO folders(id, name, updated_at) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET name = excluded.name, updated_at = excluded.updated_at', [
+          f.id,
+          f.name,
+          iso(f.updated_at),
+        ]);
       }
 
       for (const d of res.decks) {
         await tx.run(
-          'INSERT INTO decks(id, name, topic, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name = excluded.name, topic = excluded.topic, updated_at = excluded.updated_at',
-          [d.id, d.name, d.topic, iso(d.updated_at)],
+          'INSERT INTO decks(id, name, topic, folder_id, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name = excluded.name, topic = excluded.topic, folder_id = excluded.folder_id, updated_at = excluded.updated_at',
+          [d.id, d.name, d.topic, d.folder_id ?? null, iso(d.updated_at)],
         );
       }
 
@@ -298,6 +351,10 @@ export class LocalStore {
       for (const gone of res.deleted) {
         if (gone.kind === 'card') {
           await tx.run('DELETE FROM cards WHERE id = ?', [gone.id]);
+        } else if (gone.kind === 'folder') {
+          // The folder goes, its decks stay: take them out of it (the server also sends each deck's own change).
+          await tx.run('UPDATE decks SET folder_id = NULL WHERE folder_id = ?', [gone.id]);
+          await tx.run('DELETE FROM folders WHERE id = ?', [gone.id]);
         } else {
           await tx.run('DELETE FROM cards WHERE deck_id = ?', [gone.id]);
           await tx.run('DELETE FROM decks WHERE id = ?', [gone.id]);

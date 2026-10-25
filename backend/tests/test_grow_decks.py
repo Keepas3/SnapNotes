@@ -312,7 +312,7 @@ def test_a_version_3_database_gains_the_target_deck_column_and_keeps_its_jobs(tm
     db.init()
     db.init()  # a restart changes nothing
     with db.conn() as c:
-        assert c.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert c.execute("PRAGMA user_version").fetchone()[0] == 5
         assert c.execute("SELECT status, target_deck_id FROM jobs WHERE id = 'j'").fetchone()["status"] == "completed"
         assert c.execute("SELECT target_deck_id FROM jobs WHERE id = 'j'").fetchone()[0] is None
 

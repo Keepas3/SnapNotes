@@ -8,6 +8,7 @@ import type {
   CardStatus,
   Deck,
   EvidenceResponse,
+  Folder,
   Job,
   MergeResult,
   NewCard,
@@ -226,6 +227,33 @@ export class ApiClient {
 
   deleteDeck(id: string): Promise<void> {
     return this.request('DELETE', `/decks/${id}`);
+  }
+
+  // -- folders ------------------------------------------------------------------------
+
+  listFolders(): Promise<Folder[]> {
+    return this.request('GET', '/folders');
+  }
+
+  createFolder(name: string): Promise<Folder> {
+    return this.request('POST', '/folders', { json: { name } });
+  }
+
+  renameFolder(id: string, name: string): Promise<Folder> {
+    if (!id) throw new Error('renameFolder needs a folder id');
+    return this.request('PATCH', `/folders/${id}`, { json: { name } });
+  }
+
+  /** Removes the folder only; its decks are kept and become unfiled. */
+  deleteFolder(id: string): Promise<void> {
+    if (!id) throw new Error('deleteFolder needs a folder id');
+    return this.request('DELETE', `/folders/${id}`);
+  }
+
+  /** File a deck in a folder, or take it out with `null`. */
+  setDeckFolder(deckId: string, folderId: string | null): Promise<Deck> {
+    if (!deckId) throw new Error('setDeckFolder needs a deck id');
+    return this.request('PATCH', `/decks/${deckId}`, { json: { folder_id: folderId } });
   }
 
   /** Move every card of `fromId` into `intoId` and remove `fromId`. Study history travels with the cards. */

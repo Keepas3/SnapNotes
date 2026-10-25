@@ -108,6 +108,7 @@ class DeckOut(BaseModel):
     id: str
     name: str
     topic: str
+    folder_id: str | None = None  # the folder this deck is filed in, or None
     counts: DeckCounts
     created_at: str
     updated_at: str
@@ -121,6 +122,20 @@ class DeckIn(BaseModel):
 class DeckPatch(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=80)
     topic: str | None = Field(default=None, max_length=120)
+    # A folder id files the deck; an explicit null takes it out of its folder; leaving the field out changes nothing.
+    folder_id: str | None = None
+
+
+class FolderIn(BaseModel):
+    name: str = Field(max_length=200)  # the real length limit is checked (and explained) by the store
+
+
+class FolderOut(BaseModel):
+    id: str
+    name: str
+    deck_count: int
+    created_at: str
+    updated_at: str
 
 
 class MergeIn(BaseModel):

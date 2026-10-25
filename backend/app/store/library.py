@@ -12,9 +12,14 @@ from app.core.db import Database
 
 CARD_STATUSES = ("draft", "approved", "rejected")
 CARD_DIFFICULTIES = ("easy", "medium", "hard")
+MAX_FOLDER_NAME = 80
 MANUAL_CARD_TYPES = ("basic", "cloze")
 MANUAL_SOURCE = "Added by you"  # `source_ref` of a card the user typed in, and what the app and exports show for its origin "manual"
 _CLOZE_BLANK = re.compile(r"\{\{c\d+::.+?\}\}", re.DOTALL)
+
+
+class FolderNotFound(LookupError):
+    pass
 
 
 def now() -> str:
@@ -83,6 +88,66 @@ class Library:
     def delete_deck(self, deck_id: str) -> bool:
         with self.db.tx() as c:
             return c.execute("DELETE FROM decks WHERE id = ?", (deck_id,)).rowcount > 0
+
+    # -- folders -------------------------------------------------------------------------
+
+    def list_folders(self) -> list[dict[str, Any]]:
+        with self.db.conn() as c:
+            rows = c.execute(
+                "SELECT f.id, f.name, f.created_at, f.updated_at, COUNT(d.id) AS deck_count"
+                " FROM folders f LEFT JOIN decks d ON d.folder_id = f.id GROUP BY f.id ORDER BY lower(f.name), f.id"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_folder(self, folder_id: str) -> dict[str, Any] | None:
+        return next((f for f in self.list_folders() if f["id"] == folder_id), None)
+
+    @staticmethod
+    def _folder_name(c: sqlite3.Connection, name: str, own_id: str | None) -> str:
+        """The trimmed name, or ValueError (a sentence for the user) if it is empty, too long or already used by another folder."""
+        name = name.strip()
+        if not name:
+            raise ValueError("Give the folder a name.")
+        if len(name) > MAX_FOLDER_NAME:
+            raise ValueError(f"Use at most {MAX_FOLDER_NAME} characters for a folder name.")
+        clash = c.execute("SELECT 1 FROM folders WHERE lower(name) = lower(?) AND id IS NOT ?", (name, own_id)).fetchone()
+        if clash:
+            raise ValueError("You already have a folder with that name.")
+        return name
+
+    def create_folder(self, name: str) -> dict[str, Any]:
+        folder_id, ts = new_id(), now()
+        with self.db.tx() as c:
+            name = self._folder_name(c, name, None)
+            c.execute("INSERT INTO folders(id, name, created_at, updated_at) VALUES (?,?,?,?)", (folder_id, name, ts, ts))
+        return self.get_folder(folder_id)  # type: ignore[return-value]
+
+    def rename_folder(self, folder_id: str, name: str) -> dict[str, Any] | None:
+        with self.db.tx() as c:
+            if c.execute("SELECT 1 FROM folders WHERE id = ?", (folder_id,)).fetchone() is None:
+                return None
+            name = self._folder_name(c, name, folder_id)
+            c.execute("UPDATE folders SET name = ?, updated_at = ? WHERE id = ?", (name, now(), folder_id))
+        return self.get_folder(folder_id)
+
+    def delete_folder(self, folder_id: str) -> bool:
+        """Remove a folder. Its decks are kept: they are taken out of the folder first (each deck's own change is recorded, so
+        phones hear about it), never deleted along with it."""
+        ts = now()
+        with self.db.tx() as c:
+            c.execute("UPDATE decks SET folder_id = NULL, updated_at = ? WHERE folder_id = ?", (ts, folder_id))
+            return c.execute("DELETE FROM folders WHERE id = ?", (folder_id,)).rowcount > 0
+
+    def set_deck_folder(self, deck_id: str, folder_id: str | None) -> dict[str, Any] | None:
+        """Put a deck in a folder, or take it out with `None`. Returns the deck, or None when the deck does not exist;
+        raises FolderNotFound when the folder does not."""
+        with self.db.tx() as c:
+            if c.execute("SELECT 1 FROM decks WHERE id = ?", (deck_id,)).fetchone() is None:
+                return None
+            if folder_id is not None and c.execute("SELECT 1 FROM folders WHERE id = ?", (folder_id,)).fetchone() is None:
+                raise FolderNotFound(folder_id)
+            c.execute("UPDATE decks SET folder_id = ?, updated_at = ? WHERE id = ?", (folder_id, now(), deck_id))
+        return self.get_deck(deck_id)
 
     def merge_decks(self, into_id: str, from_id: str) -> tuple[dict[str, Any], int] | None:
         """Move every card of `from_id` into `into_id`, then remove `from_id`, in one transaction.

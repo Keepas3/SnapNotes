@@ -59,6 +59,7 @@ class PullResult:
     cards: list[dict[str, Any]]
     states: list[dict[str, Any]]
     deleted: list[dict[str, str]]
+    folders: list[dict[str, Any]] = field(default_factory=list)
 
 
 class SyncStore:
@@ -160,8 +161,11 @@ class SyncStore:
             c.execute("BEGIN")  # one snapshot for all the reads below
             try:
                 max_seq = c.execute("SELECT seq FROM sync_counter WHERE id = 1").fetchone()[0]
+                folders = c.execute(
+                    "SELECT id, name, updated_at, seq FROM folders WHERE seq > ? ORDER BY seq LIMIT ?", (cursor, limit)
+                ).fetchall()
                 decks = c.execute(
-                    "SELECT id, name, topic, updated_at, seq FROM decks WHERE seq > ? ORDER BY seq LIMIT ?", (cursor, limit)
+                    "SELECT id, name, topic, folder_id, updated_at, seq FROM decks WHERE seq > ? ORDER BY seq LIMIT ?", (cursor, limit)
                 ).fetchall()
                 cards = c.execute(
                     "SELECT id, deck_id, type, front, back, origin, source_ref, source_snippet, status, created_at, updated_at, seq"
@@ -174,9 +178,11 @@ class SyncStore:
                 tombs = c.execute("SELECT seq, kind, id FROM tombstones WHERE seq > ? ORDER BY seq LIMIT ?", (cursor, limit)).fetchall()
 
                 # Only the rows selected by seq (not the schedules joined on to cards) decide where this page ends.
-                limited = [rows[-1]["seq"] for rows in (decks, cards, changed_states, tombs) if len(rows) >= limit]
+                limited = [rows[-1]["seq"] for rows in (folders, decks, cards, changed_states, tombs) if len(rows) >= limit]
                 end = min(limited) if limited else max_seq
-                decks, cards, changed_states, tombs = ([r for r in rows if r["seq"] <= end] for rows in (decks, cards, changed_states, tombs))
+                folders, decks, cards, changed_states, tombs = (
+                    [r for r in rows if r["seq"] <= end] for rows in (folders, decks, cards, changed_states, tombs)
+                )
 
                 # A card always travels with its schedule, so a device never studies it as "new" by mistake.
                 states = list(changed_states)
@@ -193,6 +199,7 @@ class SyncStore:
         return PullResult(
             cursor=end,
             has_more=bool(limited),
+            folders=[dict(f) for f in folders],
             decks=[dict(d) for d in decks],
             cards=[dict(card) for card in cards],
             states=[{"card_id": s["card_id"], "last_review": s["last_review"], "state": json.loads(s["state_json"])} for s in states],

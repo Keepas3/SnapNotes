@@ -65,10 +65,17 @@ class RejectedLog(BaseModel):
     reason: Literal["bad_rating", "bad_time", "bad_state", "unknown_card"]
 
 
+class SyncFolder(BaseModel):
+    id: str
+    name: str
+    updated_at: str
+
+
 class SyncDeck(BaseModel):
     id: str
     name: str
     topic: str
+    folder_id: str | None = None  # the folder the deck is filed in, or None
     updated_at: str
 
 
@@ -93,7 +100,7 @@ class SyncCardState(BaseModel):
 
 
 class Deleted(BaseModel):
-    kind: Literal["deck", "card"]
+    kind: Literal["deck", "card", "folder"]
     id: str
 
 
@@ -109,6 +116,7 @@ class SyncResponse(BaseModel):
     accepted: int
     duplicates: int
     rejected: list[RejectedLog]
+    folders: list[SyncFolder] = Field(default_factory=list)
     decks: list[SyncDeck]
     cards: list[SyncCard]
     states: list[SyncCardState]
@@ -145,6 +153,7 @@ async def sync(body: SyncRequest, store: SyncStore = Depends(get_sync_store)) ->
         accepted=pushed.accepted,
         duplicates=pushed.duplicates,
         rejected=[RejectedLog(id=i, reason=r) for i, r in pushed.rejected],  # type: ignore[arg-type]
+        folders=pulled.folders,  # type: ignore[arg-type]
         decks=pulled.decks,  # type: ignore[arg-type]
         cards=pulled.cards,  # type: ignore[arg-type]
         states=pulled.states,  # type: ignore[arg-type]

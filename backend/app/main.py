@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api import cards, decks, jobs, sync, uploads
+from app.api import cards, decks, folders, jobs, sync, uploads
 from app.core.auth import require_auth, token_problem
 from app.core.bodylimit import BodyLimitMiddleware
 from app.core.config import Settings, fact_check_problem, provider_problem
@@ -116,7 +116,7 @@ def create_app(cfg: Settings | None = None, llm_factory: Callable[[], LLM] | Non
         return {"status": "ok"}
 
     api = APIRouter(dependencies=[Depends(require_auth)])
-    for module in (uploads, jobs, decks, cards, sync):
+    for module in (uploads, jobs, decks, folders, cards, sync):
         api.include_router(module.router)
     app.include_router(api)
     return app

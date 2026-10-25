@@ -148,7 +148,24 @@ SYNC_TRIGGER_STATEMENTS = [
     _tombstone_trigger("decks", "deck"),
     _tombstone_trigger("cards", "card"),
 ]
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
+
+# Schema version 5: folders that group decks. A folder syncs like a deck (a change counter stamp, a tombstone on delete), and a deck
+# names its folder in `folder_id` (NULL: not in a folder). Written so running it twice is harmless.
+FOLDER_MIGRATION_STATEMENTS = [
+    """CREATE TABLE IF NOT EXISTS folders (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        seq INTEGER NOT NULL DEFAULT 0
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_folders_seq ON folders(seq)",
+]
+FOLDER_TRIGGER_STATEMENTS = [
+    stmt.replace("CREATE TRIGGER", "CREATE TRIGGER IF NOT EXISTS", 1)
+    for stmt in (*_seq_triggers("folders"), _tombstone_trigger("folders", "folder"))
+]
 
 
 class Database:
@@ -200,6 +217,14 @@ class Database:
                 # Version 4: a job can be told to add its cards to an existing deck instead of making a new one.
                 if "target_deck_id" not in {row[1] for row in conn.execute("PRAGMA table_info(jobs)")}:
                     conn.execute("ALTER TABLE jobs ADD COLUMN target_deck_id TEXT REFERENCES decks(id) ON DELETE SET NULL")
+            if version < 5:
+                for statement in FOLDER_MIGRATION_STATEMENTS:
+                    conn.execute(statement)
+                if "folder_id" not in {row[1] for row in conn.execute("PRAGMA table_info(decks)")}:
+                    conn.execute("ALTER TABLE decks ADD COLUMN folder_id TEXT REFERENCES folders(id) ON DELETE SET NULL")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_decks_folder ON decks(folder_id)")
+                for statement in FOLDER_TRIGGER_STATEMENTS:
+                    conn.execute(statement)
             conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             conn.execute("COMMIT")
         except BaseException:

@@ -71,6 +71,16 @@ Each deck on the home screen has two small buttons: the **✕** at the top right
 
 All of these need a connection, like rename and delete, because the server holds the library; studying stays offline.
 
+## Folders
+
+Folders group decks on the same subject, such as **Biology** holding Bio I and Bio II, or **Programming** holding Python, SQL and Git. They are kept on the server and synced like decks, so a new phone sees them too.
+
+- **Make one:** **New folder** beside "Your decks". A folder's ☰ renames it or deletes it; deleting a folder never deletes its decks (they simply stop being in a folder, and the question says so).
+- **Put a deck in one:** the deck's ☰ → **Folder** → pick a folder (or make a new one right there). This always works. As a shortcut, **press and hold a deck and drop it on a folder's card**; the folder's border lights up when letting go will file it. Drop a deck on the **Not in a folder** heading to take it out. A drag that lands anywhere else only reorders the deck among the decks of its own list.
+- **What Home shows:** folders first, then (once any folder exists) the decks that are in none. Tap a folder's name to collapse or expand it; that is remembered on this phone. A folder shows how many decks and cards it holds and what is due and new across all of them; the "new" figure respects your daily new-card limit.
+- **Study a whole folder:** the **Study folder** button on its card studies every deck in it together.
+- Folders are listed A to Z. The order of decks inside a folder is the order you dragged them into on this phone. Making, renaming, deleting and filing need a connection (like rename and merge); studying stays offline.
+
 ## Appearance
 
 **Settings → Appearance** chooses **Same as phone** (the default: light or dark follows the phone's own setting), **Light** or **Dark**. The choice applies to the whole app straight away and is remembered on this phone. The dark palette is the `dark` set in `src/constants/theme.ts`; the choice itself is in `src/lib/appearance.ts` and `appearance-provider.tsx`. The colours the system draws itself (alert dialogs, the keyboard) follow the choice too.

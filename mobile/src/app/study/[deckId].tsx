@@ -1,5 +1,5 @@
 import { Stack, router, useLocalSearchParams } from 'expo-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import { CardFace, CardMeta } from '@/components/card-face';
@@ -9,6 +9,7 @@ import { Banner, Button, Centered, EmptyState, Screen, Spinner } from '@/compone
 import { Spacing, type ThemeColor } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { plural } from '@/lib/format';
+import { parseStudyScope } from '@/lib/folders';
 import type { SwipeDirection } from '@/lib/swipe';
 import { describeInterval, previewDue, RATINGS, ratingForSwipe, type RatingValue } from '@/study/scheduler';
 import type { LocalCard, StudyCounts } from '@/study/store';
@@ -31,7 +32,8 @@ const msSince = (startedAt: number) => Date.now() - startedAt;
 
 export default function StudyScreen() {
   const { deckId } = useLocalSearchParams<{ deckId: string }>();
-  const scope = deckId === 'all' ? null : deckId;
+  // Kept as one value per address, so the effects that depend on it do not run again on every render.
+  const scope = useMemo(() => parseStudyScope(deckId), [deckId]);
   const { store, storeError, status, sync } = useSync();
   const invalidateLocal = useInvalidateLocal();
 

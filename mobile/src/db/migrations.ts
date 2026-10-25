@@ -51,6 +51,16 @@ export const MIGRATIONS: string[] = [
   CREATE INDEX idx_logs_pending ON review_logs(synced, reviewed_at);
   CREATE INDEX idx_logs_reviewed ON review_logs(reviewed_at);
   `,
+  // Version 2: folders that group decks. A deck names its folder in folder_id (NULL: not in one).
+  `
+  CREATE TABLE folders (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  ALTER TABLE decks ADD COLUMN folder_id TEXT;
+  CREATE INDEX idx_decks_folder ON decks(folder_id);
+  `,
 ];
 
 export async function migrate(db: Db): Promise<void> {

@@ -4,20 +4,23 @@ import { useCallback, useRef, useState } from 'react';
 import { Pressable, RefreshControl, StyleSheet, View } from 'react-native';
 
 import { ApiError } from '@/api/client';
-import { useDecks, useDeleteDeck, useJobs } from '@/api/hooks';
+import { useDecks, useDeleteDeck, useJobs, useSetDeckFolder } from '@/api/hooks';
 import type { Job } from '@/api/types';
 import { DeckSettingsSheet } from '@/components/deck-settings';
 import { DraggableRow } from '@/components/draggable-row';
+import { FolderSheet, type FolderSheetTarget } from '@/components/folder-sheet';
 import { ThemedText } from '@/components/themed-text';
 import { Badge, Banner, Button, Card, Centered, EmptyState, IconButton, Screen, Section, Spinner } from '@/components/ui';
 import { Spacing } from '@/constants/theme';
+import { useTheme } from '@/hooks/use-theme';
 import { confirm } from '@/lib/confirm';
-import { deleteDeckMessage, dragShift, dragTarget, moveItem, orderDecks, type RowBox } from '@/lib/deck';
+import { deleteDeckMessage, dragShift, moveItem, orderDecks, type RowBox } from '@/lib/deck';
+import { dropTarget, folderSubtitle, homeRows, reorderWithin, siblingIndexes, studyParam, type DropTarget, type HomeRow } from '@/lib/folders';
 import { plural } from '@/lib/format';
 import { useSettings } from '@/lib/settings';
 import { JOB_STATUS_LABEL } from '@/lib/steps';
-import { useDeckOrder, useLocalDecks, usePendingReviews, useSetDeckOrder } from '@/study/hooks';
-import type { DeckSummary } from '@/study/store';
+import { useClosedFolders, useDeckOrder, useLocalDecks, useLocalFolders, usePendingReviews, useSetClosedFolders, useSetDeckOrder, useStudyCounts } from '@/study/hooks';
+import type { DeckSummary, FolderSummary } from '@/study/store';
 import { LOCAL_KEY, useSync } from '@/sync/provider';
 
 export default function Home() {
@@ -52,12 +55,18 @@ function HomeContent() {
   const pending = usePendingReviews();
   const savedOrder = useDeckOrder(); // the order the user dragged the decks into, kept on this phone
   const saveOrder = useSetDeckOrder();
+  const localFolders = useLocalFolders(); // folders as the phone knows them
+  const closedFolders = useClosedFolders(); // which folders are collapsed (a preference of this phone)
+  const saveClosed = useSetClosedFolders();
+  const fileDeck = useSetDeckFolder(); // dropping a deck on a folder changes the library on the server
+  const [folderSheet, setFolderSheet] = useState<FolderSheetTarget | null>(null);
+  const [moveError, setMoveError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  // While a deck is being dragged: which one, where it would land, how far the finger moved, and how far the others slide.
-  const [drag, setDrag] = useState<{ from: number; to: number; dy: number; step: number } | null>(null);
+  // While a deck is being dragged: which row, where it would land, how far the finger moved, and how far the others slide.
+  const [drag, setDrag] = useState<{ from: number; dy: number; step: number; target: DropTarget } | null>(null);
   const [held, setHeld] = useState(false); // a finger has been held on a deck long enough that it may be dragged: the page must not scroll
-  // Each deck card's height, filled in as they are laid out. Heights only: a card's position is worked out from them, because a
-  // layout event is not sent when a card merely moves (it would be stale after a reorder).
+  // Each row's height, filled in as they are laid out. Heights only: a row's position is worked out from them, because a
+  // layout event is not sent when a row merely moves (it would be stale after a reorder).
   const heights = useRef(new Map<string, number>());
 
   // Whenever Home comes into view, refresh what the phone knows and catch up with the server.
@@ -76,14 +85,22 @@ function HomeContent() {
 
   const inProgress = (jobs.data ?? []).filter((j) => j.status !== 'completed');
   const draftCounts = new Map((serverDecks.data ?? []).map((d) => [d.id, d.counts.draft]));
-  const decks = orderDecks(local.data ?? [], savedOrder.data ?? []);
+  const decks = local.data ?? [];
+  const folders = localFolders.data ?? [];
+  const closed = new Set(closedFolders.data ?? []);
+  const orderedIds = orderDecks(decks, savedOrder.data ?? []).map((d) => d.id); // every deck, in the order the user arranged them
+  const rows = homeRows(decks, folders, savedOrder.data ?? [], closed);
+  const deckById = new Map(decks.map((d) => [d.id, d]));
+  const folderById = new Map(folders.map((f) => [f.id, f]));
   const waiting = decks.reduce((n, d) => n + d.new + d.learning + d.review, 0);
 
-  /** Where each card sits, top to bottom in the order shown now (relative to the first). */
+  const rowKey = (row: HomeRow) => (row.kind === 'unfiled' ? 'unfiled' : `${row.kind}:${row.id}`);
+
+  /** Where each row sits, top to bottom as shown now (relative to the first). */
   function rowBoxes(): RowBox[] {
     let y = 0;
-    return decks.map((d) => {
-      const height = heights.current.get(d.id) ?? 0;
+    return rows.map((row) => {
+      const height = heights.current.get(rowKey(row)) ?? 0;
       const box = { y, height };
       y += height + DECK_GAP;
       return box;
@@ -91,19 +108,55 @@ function HomeContent() {
   }
 
   function dragStart(from: number) {
-    setDrag({ from, to: from, dy: 0, step: (rowBoxes()[from]?.height ?? 0) + DECK_GAP });
+    setDrag({ from, dy: 0, step: (rowBoxes()[from]?.height ?? 0) + DECK_GAP, target: { type: 'none' } });
   }
   function dragMove(from: number, dy: number) {
-    setDrag((d) => (d ? { ...d, from, dy, to: dragTarget(rowBoxes(), from, dy) } : d));
+    setDrag((d) => (d ? { ...d, from, dy, target: dropTarget(rows, rowBoxes(), from, dy) } : d));
   }
-  function dragEnd(from: number, dy: number) {
-    const to = dragTarget(rowBoxes(), from, dy);
+  function saveReorder(from: number, to: number) {
+    const siblings = siblingIndexes(rows, from);
+    const ids = siblings.map((i) => (rows[i] as Extract<HomeRow, { kind: 'deck' }>).id);
+    saveOrder.mutate(reorderWithin(orderedIds, moveItem(ids, siblings.indexOf(from), to)));
+  }
+  async function dragEnd(from: number, dy: number) {
+    const target = dropTarget(rows, rowBoxes(), from, dy);
+    const heldRow = rows[from];
     setDrag(null);
-    if (to !== from) saveOrder.mutate(moveItem(decks, from, to).map((d) => d.id));
+    if (target.type === 'reorder') saveReorder(from, target.to);
+    else if ((target.type === 'folder' || target.type === 'unfile') && heldRow.kind === 'deck') {
+      setMoveError(null);
+      try {
+        await fileDeck.mutateAsync({ deckId: heldRow.id, folderId: target.type === 'folder' ? target.folderId : null });
+        await refreshPhone();
+      } catch (e) {
+        setMoveError(e instanceof Error ? e.message : 'Could not move the deck.');
+      }
+    }
   }
   function nudge(from: number, direction: -1 | 1) {
-    const to = from + direction;
-    if (to >= 0 && to < decks.length) saveOrder.mutate(moveItem(decks, from, to).map((d) => d.id));
+    const siblings = siblingIndexes(rows, from);
+    const to = siblings.indexOf(from) + direction;
+    if (to >= 0 && to < siblings.length) saveReorder(from, to);
+  }
+  function toggleFolder(id: string) {
+    saveClosed.mutate(closed.has(id) ? [...closed].filter((x) => x !== id) : [...closed, id]);
+  }
+
+  /** The phone's list is its own copy of the library, so bring it up to date as soon as the server has changed. */
+  async function refreshPhone() {
+    queryClient.invalidateQueries({ queryKey: LOCAL_KEY });
+    await sync();
+  }
+
+  /** How a row moves while a deck is held: the held one follows the finger, and the decks it passes make room. */
+  function rowMotion(i: number) {
+    if (drag === null) return undefined;
+    if (drag.from === i) return { transform: [{ translateY: drag.dy }], zIndex: 10, opacity: 0.92 };
+    if (drag.target.type !== 'reorder') return undefined;
+    const siblings = siblingIndexes(rows, drag.from);
+    const place = siblings.indexOf(i);
+    if (place < 0) return undefined;
+    return { transform: [{ translateY: dragShift(place, siblings.indexOf(drag.from), drag.target.to, drag.step) }] };
   }
 
   const onlineError = serverDecks.error ?? jobs.error;
@@ -138,46 +191,119 @@ function HomeContent() {
         </Section>
       ) : null}
 
-      <Section title="Your decks">
+      <Section title="Your decks" right={<Button title="New folder" variant="ghost" onPress={() => setFolderSheet({ mode: 'new' })} />}>
+        {moveError ? <Banner message={moveError} /> : null}
         {local.isPending ? (
           <Spinner />
-        ) : decks.length === 0 ? (
+        ) : rows.length === 0 ? (
           <EmptyState
             title={status.syncing ? 'Loading your decks…' : 'No decks yet'}
             message="Upload a PDF, slides, a document, or photos of your notes and SnapNotes will turn them into flashcards."
           />
         ) : (
-          decks.map((deck, i) => (
-            // Press and hold a deck, then drag: the held deck follows the finger and the ones it passes make room.
-            <DraggableRow
-              key={deck.id}
-              onLayout={(e) => heights.current.set(deck.id, e.nativeEvent.layout.height)}
-              onHold={() => setHeld(true)}
-              onLift={() => dragStart(i)}
-              onMove={(dy) => dragMove(i, dy)}
-              onDrop={(dy) => {
-                dragEnd(i, dy);
-                setHeld(false);
-              }}
-              onCancel={() => {
-                setDrag(null);
-                setHeld(false);
-              }}
-              style={
-                drag === null
-                  ? undefined
-                  : drag.from === i
-                    ? { transform: [{ translateY: drag.dy }], zIndex: 10, opacity: 0.92 }
-                    : { transform: [{ translateY: dragShift(i, drag.from, drag.to, drag.step) }] }
-              }>
-              <DeckRow deck={deck} drafts={draftCounts.get(deck.id) ?? 0} onMove={decks.length > 1 ? (direction) => nudge(i, direction) : undefined} />
-            </DraggableRow>
-          ))
+          rows.map((row, i) => {
+            const key = rowKey(row);
+            const onLayout = (e: { nativeEvent: { layout: { height: number } } }) => heights.current.set(key, e.nativeEvent.layout.height);
+            if (row.kind === 'folder') {
+              const folder = folderById.get(row.id);
+              if (!folder) return null;
+              return (
+                <View key={key} onLayout={onLayout}>
+                  <FolderRow
+                    folder={folder}
+                    open={!closed.has(folder.id)}
+                    highlighted={drag?.target.type === 'folder' && drag.target.folderId === folder.id}
+                    onToggle={() => toggleFolder(folder.id)}
+                    onSettings={() => setFolderSheet({ mode: 'edit', folder: { id: folder.id, name: folder.name }, deckCount: folder.decks })}
+                  />
+                </View>
+              );
+            }
+            if (row.kind === 'unfiled') {
+              return (
+                <View key={key} onLayout={onLayout} style={[styles.unfiled, drag?.target.type === 'unfile' && styles.unfiledActive]}>
+                  <ThemedText type="smallBold" themeColor="textSecondary">
+                    Not in a folder
+                  </ThemedText>
+                </View>
+              );
+            }
+            const deck = deckById.get(row.id);
+            if (!deck) return null;
+            const siblings = siblingIndexes(rows, i);
+            return (
+              // Press and hold a deck, then drag: the held deck follows the finger and the ones it passes make room.
+              <DraggableRow
+                key={key}
+                onLayout={onLayout}
+                onHold={() => setHeld(true)}
+                onLift={() => dragStart(i)}
+                onMove={(dy) => dragMove(i, dy)}
+                onDrop={(dy) => {
+                  void dragEnd(i, dy);
+                  setHeld(false);
+                }}
+                onCancel={() => {
+                  setDrag(null);
+                  setHeld(false);
+                }}
+                style={[row.folderId ? styles.indented : null, rowMotion(i)]}>
+                <DeckRow deck={deck} drafts={draftCounts.get(deck.id) ?? 0} onMove={siblings.length > 1 ? (direction) => nudge(i, direction) : undefined} />
+              </DraggableRow>
+            );
+          })
         )}
       </Section>
 
+      <FolderSheet target={folderSheet} onClose={() => setFolderSheet(null)} onChanged={refreshPhone} />
+
       <SyncFooter pending={pending.data ?? 0} />
     </Screen>
+  );
+}
+
+/** A folder: its name and what it holds, a Study button for everything in it, and a chevron to hide or show its decks. */
+function FolderRow({
+  folder,
+  open,
+  highlighted,
+  onToggle,
+  onSettings,
+}: {
+  folder: FolderSummary;
+  open: boolean;
+  highlighted: boolean;
+  onToggle: () => void;
+  onSettings: () => void;
+}) {
+  const theme = useTheme();
+  const counts = useStudyCounts({ folderId: folder.id }); // counted for the folder as a whole, so the shared daily new-card limit holds
+  const due = (counts.data?.learning ?? 0) + (counts.data?.review ?? 0);
+  const fresh = counts.data?.new ?? 0;
+  const parts = [due > 0 && `${due} due`, fresh > 0 && `${fresh} new`].filter(Boolean) as string[];
+  return (
+    <Card style={highlighted ? { borderColor: theme.tint, borderWidth: 2, backgroundColor: theme.backgroundSelected } : undefined}>
+      <View style={styles.deckHeader}>
+        <IconButton glyph="☰" label={`Settings for folder ${folder.name}`} onPress={onSettings} />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`${folder.name}, ${folderSubtitle(folder.decks, folder.total)}`}
+          accessibilityState={{ expanded: open }}
+          onPress={onToggle}
+          style={({ pressed }) => [styles.flex, styles.folderTitle, pressed && styles.pressed]}>
+          <ThemedText type="heading" numberOfLines={1} style={styles.flex}>
+            {folder.name}
+          </ThemedText>
+          <ThemedText themeColor="textSecondary">{open ? '⌃' : '⌄'}</ThemedText>
+        </Pressable>
+      </View>
+      <ThemedText type="small" themeColor="textSecondary">
+        {folderSubtitle(folder.decks, folder.total)} · {parts.length ? parts.join(' · ') : folder.total > 0 ? 'nothing due' : 'empty'}
+      </ThemedText>
+      {due + fresh > 0 ? (
+        <Button title={`Study folder (${due + fresh})`} variant="secondary" onPress={() => router.push({ pathname: '/study/[deckId]', params: { deckId: studyParam({ folderId: folder.id }) } })} />
+      ) : null}
+    </Card>
   );
 }
 
@@ -290,7 +416,7 @@ function DeckRow({ deck, drafts, onMove }: { deck: DeckSummary; drafts: number; 
       {studyable > 0 ? (
         <Button title={`Study (${studyable})`} variant="secondary" onPress={() => router.push({ pathname: '/study/[deckId]', params: { deckId: deck.id } })} />
       ) : null}
-      <DeckSettingsSheet deck={settingsOpen ? { id: deck.id, name: deck.name } : null} onClose={() => setSettingsOpen(false)} onChanged={refreshPhone} />
+      <DeckSettingsSheet deck={settingsOpen ? { id: deck.id, name: deck.name, folderId: deck.folder_id } : null} onClose={() => setSettingsOpen(false)} onChanged={refreshPhone} />
     </Card>
   );
 }
@@ -301,6 +427,10 @@ const DECK_GAP = Spacing.two;
 const styles = StyleSheet.create({
   menuButton: { paddingHorizontal: Spacing.two, paddingVertical: Spacing.one },
   menuGlyph: { fontSize: 24, lineHeight: 28 },
+  indented: { marginLeft: Spacing.three },
+  folderTitle: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  unfiled: { paddingTop: Spacing.two, paddingHorizontal: Spacing.one, borderRadius: 8 },
+  unfiledActive: { backgroundColor: 'rgba(120, 130, 255, 0.18)' },
   rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.two },
   deckHeader: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
   flex: { flex: 1 },

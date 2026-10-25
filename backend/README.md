@@ -132,6 +132,15 @@ Three ways to add to a deck you already have:
 - **Merge:** `POST /decks/{id}/merge` with `{"from_deck_id": "..."}` moves every card of the other deck (any status) into this one and removes the other deck, in one transaction. Cards keep their ids, so review logs and schedules carry over untouched. Uploads that were headed for, or came from, the removed deck are re-pointed at this one. Merging a deck into itself is a 409, an unknown deck a 404. The response is `{"deck": ..., "moved": n}`.
 - **Type a card:** `POST /decks/{id}/cards` with `{"type": "basic" | "cloze", "front": "...", "back": "..."}` creates an **approved** card at once (nothing to review): `origin` is `manual`, `source_ref` is "Added by you", and it has no job. A basic card needs both sides; a cloze card needs a `{{c1::blank}}` in the front and may have an empty back. Problems come back as a 422 with a sentence. Anki exports tag these cards `source-manual` and say "Added by you"; the CSV `origin` column says `manual`.
 
+### Folders
+
+Folders group decks that share a subject (Biology: Bio I, Bio II). One level only: a folder holds decks, never other folders. A deck is in at most one folder, and a folder never owns its decks.
+
+- `GET /folders`, `POST /folders {"name": "..."}`, `PATCH /folders/{id} {"name": "..."}`, `DELETE /folders/{id}`. Names are 1 to 80 characters and unique ignoring case (409 with a sentence otherwise). Each folder reports its `deck_count`.
+- **Filing a deck:** `PATCH /decks/{id}` with `{"folder_id": "<folder id>"}` files it, `{"folder_id": null}` takes it out, and leaving `folder_id` out changes nothing about it. `DeckOut` carries `folder_id`. An unknown folder is a 404.
+- **Deleting a folder never deletes decks:** they are taken out of it first (each deck's change is recorded, so phones hear about it), then the folder goes. Merging decks leaves the destination in its own folder.
+- **Sync:** a pull also returns `folders`, every deck carries its `folder_id`, and `deleted` can name a `folder`. Pages still end at one cursor for every kind of row, so a phone never learns a folder is gone before it has learned its decks left it. A phone that predates folders ignores the new fields.
+
 ### Export
 
 `GET /decks/{id}/export?format=apkg|csv` downloads the deck's **approved** cards (409 if there are none).
@@ -158,7 +167,7 @@ The response carries `decks`, `cards` (with their `status`, so the device can dr
 - **Push is idempotent.** Review logs are keyed by a client-generated id, so a retried request never duplicates a review. A bad log (unknown card, rating outside 1-4, a date more than a day in the future) is listed in `rejected` and the rest of the batch is still applied.
 - **The device computes the schedule.** Each log carries the FSRS state after the review; the server stores the log and keeps the state of the most recent review per card (an older log never rewinds it). Cards always arrive together with their schedule.
 - **A device can tell when it is no longer talking to the database it synced with.** Every database has a random `epoch` created with it, sent back by the device on each request. If the epoch differs, or the device's cursor is ahead of anything this database has ever numbered (the server was rolled back), the response has `reset: true` and is a full download from zero. The device then discards its cached decks and cards (including cards the server no longer has), keeps its review history, and uploads all of it again: reviews the server lost are restored, reviews it still has are ignored as duplicates, and reviews of cards that no longer exist are rejected. This covers a rebuilt volume automatically. A restored snapshot has the *old* epoch, so after a restore run `python -m app.admin rotate-epoch` (see `DEPLOY.md`).
-- **Existing databases upgrade in place** (schema version 4, tracked with `PRAGMA user_version`; version 4 added `jobs.target_deck_id`); rows that predate sync are numbered oldest first.
+- **Existing databases upgrade in place** (schema version 5, tracked with `PRAGMA user_version`; version 4 added `jobs.target_deck_id`, version 5 added folders and `decks.folder_id`); rows that predate sync are numbered oldest first.
 
 ### Spend and safety limits
 
