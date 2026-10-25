@@ -2,16 +2,18 @@ import { useState } from 'react';
 import { KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { useDeleteCard, usePatchCard } from '@/api/hooks';
+import { useDeleteCard, usePatchCard, useSuggestChoices } from '@/api/hooks';
 import type { Card, Difficulty } from '@/api/types';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { cleanWrongAnswers, wrongAnswerProblem } from '@/lib/choices';
 import { hasCloze } from '@/lib/cloze';
 import { confirm } from '@/lib/confirm';
 
 import { CardMeta } from './card-face';
 import { ThemedText } from './themed-text';
 import { Banner, Button, Chip } from './ui';
+import { WrongAnswers } from './wrong-answers';
 
 interface Props {
   /** The card being edited; the editor is hidden while this is null. */
@@ -45,19 +47,47 @@ function EditorBody({ card, onClose, onSaved, onDeleted }: Props & { card: Card 
   const [back, setBack] = useState(card.back);
   const [difficulty, setDifficulty] = useState<Difficulty>(card.difficulty);
   const [error, setError] = useState<string | null>(null);
+  // The wrong answers for multiple choice, with a few empty fields to write into.
+  const [wrong, setWrong] = useState<string[]>(() => {
+    const own = [...(card.choices ?? [])];
+    while (own.length < 3) own.push('');
+    return own;
+  });
+  const suggest = useSuggestChoices();
 
   const inputStyle = [styles.input, { color: theme.text, backgroundColor: theme.backgroundElement, borderColor: theme.border }];
   const isCloze = card.type === 'cloze';
   const clozeBroken = isCloze && !hasCloze(front);
+
+  /** Ask the AI for wrong answers for this card and put them in the fields to be edited. Nothing is saved until Save changes. */
+  async function suggestWrong() {
+    setError(null);
+    try {
+      const res = await suggest.mutateAsync({ deckId: card.deck_id, cardIds: [card.id], wrongPerCard: 3 });
+      const found = res.suggestions[0]?.wrong_answers;
+      if (found) setWrong([...found, ...Array(Math.max(0, 3 - found.length)).fill('')]);
+      else setError(res.skipped[0]?.reason ?? 'The AI could not suggest wrong answers for this card.');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not get suggestions.');
+    }
+  }
 
   async function save() {
     if (!front.trim() || (!isCloze && !back.trim())) {
       setError('Both sides need some text.');
       return;
     }
+    const problem = isCloze ? null : wrongAnswerProblem(wrong, back);
+    if (problem) {
+      setError(problem);
+      return;
+    }
     setError(null);
     try {
-      const saved = await patch.mutateAsync({ id: card.id, patch: { front: front.trim(), back: back.trim(), difficulty } });
+      const saved = await patch.mutateAsync({
+        id: card.id,
+        patch: { front: front.trim(), back: back.trim(), difficulty, ...(isCloze ? {} : { choices: cleanWrongAnswers(wrong) }) },
+      });
       onSaved?.(saved);
       onClose();
     } catch (e) {
@@ -96,6 +126,14 @@ function EditorBody({ card, onClose, onSaved, onDeleted }: Props & { card: Card 
 
       <ThemedText type="smallBold">{isCloze ? 'Explanation (optional)' : 'Back'}</ThemedText>
       <TextInput accessibilityLabel="Back of card" style={inputStyle} value={back} onChangeText={setBack} multiline placeholderTextColor={theme.textSecondary} />
+
+      {isCloze ? (
+        <ThemedText type="caption" themeColor="textSecondary">
+          Multiple choice is not available for fill-in-the-blank cards.
+        </ThemedText>
+      ) : (
+        <WrongAnswers values={wrong} onChange={setWrong} onSuggest={card.status === 'approved' ? suggestWrong : undefined} suggesting={suggest.isPending} />
+      )}
 
       <ThemedText type="smallBold">Difficulty</ThemedText>
       <View style={styles.row}>

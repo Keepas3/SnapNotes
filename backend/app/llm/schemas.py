@@ -48,6 +48,15 @@ class VerifyResult(BaseModel):
     verdicts: list[CardVerdict]
 
 
+class ChoiceItem(BaseModel):
+    index: int  # which card, as numbered in the request
+    wrong_answers: list[str]  # empty when the question has no clear wrong alternatives
+
+
+class ChoiceSet(BaseModel):
+    items: list[ChoiceItem]
+
+
 # --- Fact-check variants -----------------------------------------------------------------
 # Used only when the fact check is on (see fact_check_enabled). They are separate classes, not extra fields on the ones
 # above, so that when the check is off the requests sent to the model are exactly what they always were.

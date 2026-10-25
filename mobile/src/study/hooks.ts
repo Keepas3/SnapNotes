@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { LOCAL_KEY, useSync } from '@/sync/provider';
 
-import type { DeckSummary, FolderSummary, StudyCounts, StudyScope } from './store';
+import type { ChoicePrefs, DeckSummary, FolderSummary, StudyCounts, StudyScope } from './store';
 
 /** Reads from the on-device database. They work offline and refetch after every sync or study answer. */
 
@@ -84,6 +84,27 @@ export function useSetDeckOrder() {
     mutationFn: (ids: string[]) => store!.setDeckOrder(ids),
     // Show the new order at once; the save to the phone's database follows.
     onMutate: (ids) => qc.setQueryData(key, ids),
+    onSettled: () => qc.invalidateQueries({ queryKey: key }),
+  });
+}
+
+/** How multiple choice is set up on this phone: on or off, 4 or 5 options, and whether gaps are filled from other cards. */
+export function useChoicePrefs() {
+  const { store } = useSync();
+  return useQuery<ChoicePrefs>({
+    queryKey: [...LOCAL_KEY, 'choicePrefs'],
+    queryFn: () => store!.choicePrefs(),
+    enabled: store !== null,
+  });
+}
+
+export function useSetChoicePrefs() {
+  const { store } = useSync();
+  const qc = useQueryClient();
+  const key = [...LOCAL_KEY, 'choicePrefs'];
+  return useMutation({
+    mutationFn: (change: Partial<ChoicePrefs>) => store!.setChoicePrefs(change),
+    onMutate: (change) => qc.setQueryData<ChoicePrefs>(key, (old) => ({ enabled: false, count: 4, fillFromDeck: true, ...old, ...change })), // apply at once; the save follows
     onSettled: () => qc.invalidateQueries({ queryKey: key }),
   });
 }

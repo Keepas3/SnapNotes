@@ -19,6 +19,8 @@ export interface LocalCard {
   source_snippet: string;
   created_at: string;
   updated_at: string;
+  /** Wrong answers for multiple choice; the right answer is `back`. */
+  choices: string[];
   fsrs: FsrsState;
 }
 
@@ -47,6 +49,13 @@ export interface FolderSummary {
   total: number;
 }
 
+/** How multiple choice is set up on this phone (a preference of this phone, not synced). */
+export interface ChoicePrefs {
+  enabled: boolean;
+  count: 4 | 5;
+  fillFromDeck: boolean;
+}
+
 /** What to study or count: one deck (its id), every deck in a folder, or everything (null). */
 export type StudyScope = string | { folderId: string } | null;
 
@@ -69,10 +78,21 @@ interface CardRow {
   created_at: string;
   updated_at: string;
   fsrs_json: string;
+  choices_json: string;
+}
+
+/** A saved list of wrong answers; anything damaged reads as none. */
+function parseChoices(json: string | null | undefined): string[] {
+  try {
+    const parsed: unknown = JSON.parse(json ?? '[]');
+    return Array.isArray(parsed) ? parsed.filter((c): c is string => typeof c === 'string') : [];
+  } catch {
+    return [];
+  }
 }
 
 const iso = (value: string) => new Date(value).toISOString();
-const rowToCard = ({ fsrs_json, ...rest }: CardRow): LocalCard => ({ ...rest, fsrs: JSON.parse(fsrs_json) as FsrsState });
+const rowToCard = ({ fsrs_json, choices_json, ...rest }: CardRow): LocalCard => ({ ...rest, choices: parseChoices(choices_json), fsrs: JSON.parse(fsrs_json) as FsrsState });
 const chunks = <T>(items: T[], size: number): T[][] => Array.from({ length: Math.ceil(items.length / size) }, (_, i) => items.slice(i * size, i * size + size));
 
 /**
@@ -139,6 +159,23 @@ export class LocalStore {
 
   setDeckOrder(ids: string[]): Promise<void> {
     return this.setMeta('deck_order', JSON.stringify(ids));
+  }
+
+  /** How multiple choice is set up on this phone: switched on or off, 4 or 5 options, and whether gaps are filled from other cards. */
+  async choicePrefs(): Promise<ChoicePrefs> {
+    const [on, count, fill] = await Promise.all([this.getMeta('mc_on'), this.getMeta('mc_count'), this.getMeta('mc_fill')]);
+    return { enabled: on === '1', count: count === '5' ? 5 : 4, fillFromDeck: fill !== '0' };
+  }
+
+  async setChoicePrefs(change: Partial<ChoicePrefs>): Promise<void> {
+    if (change.enabled !== undefined) await this.setMeta('mc_on', change.enabled ? '1' : '0');
+    if (change.count !== undefined) await this.setMeta('mc_count', change.count === 5 ? '5' : '4');
+    if (change.fillFromDeck !== undefined) await this.setMeta('mc_fill', change.fillFromDeck ? '1' : '0');
+  }
+
+  /** The answers of a deck's other studyable cards, to borrow as wrong answers (questions and definitions only). */
+  otherAnswers(deckId: string, exceptCardId: string): Promise<{ id: string; back: string }[]> {
+    return this.db.all<{ id: string; back: string }>("SELECT id, back FROM cards WHERE deck_id = ? AND id != ? AND type IN ('basic', 'definition') AND back != ''", [deckId, exceptCardId]);
   }
 
   /** The folders the user has collapsed on Home (a preference of this phone; folders start open). */
@@ -331,11 +368,12 @@ export class LocalStore {
         }
         const fresh = newState(new Date(c.created_at));
         await tx.run(
-          `INSERT INTO cards(id, deck_id, type, front, back, origin, source_ref, source_snippet, created_at, updated_at, state, due, last_review, fsrs_json)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
+          `INSERT INTO cards(id, deck_id, type, front, back, origin, source_ref, source_snippet, created_at, updated_at, state, due, last_review, fsrs_json, choices_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
            ON CONFLICT(id) DO UPDATE SET deck_id = excluded.deck_id, type = excluded.type, front = excluded.front, back = excluded.back,
-             origin = excluded.origin, source_ref = excluded.source_ref, source_snippet = excluded.source_snippet, updated_at = excluded.updated_at`,
-          [c.id, c.deck_id, c.type, c.front, c.back, c.origin, c.source_ref, c.source_snippet, iso(c.created_at), iso(c.updated_at), fresh.state, fresh.due, JSON.stringify(fresh)],
+             origin = excluded.origin, source_ref = excluded.source_ref, source_snippet = excluded.source_snippet, updated_at = excluded.updated_at,
+             choices_json = excluded.choices_json`,
+          [c.id, c.deck_id, c.type, c.front, c.back, c.origin, c.source_ref, c.source_snippet, iso(c.created_at), iso(c.updated_at), fresh.state, fresh.due, JSON.stringify(fresh), JSON.stringify(c.choices ?? [])],
         );
       }
 

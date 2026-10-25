@@ -61,6 +61,10 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE decks ADD COLUMN folder_id TEXT;
   CREATE INDEX idx_decks_folder ON decks(folder_id);
   `,
+  // Version 3: the wrong answers of a card, for multiple choice (a JSON list of strings; the right answer is the card's back).
+  `
+  ALTER TABLE cards ADD COLUMN choices_json TEXT NOT NULL DEFAULT '[]';
+  `,
 ];
 
 export async function migrate(db: Db): Promise<void> {

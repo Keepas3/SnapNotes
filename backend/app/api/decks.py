@@ -4,14 +4,37 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 
-from app.api.deps import get_library
-from app.api.models import CardIn, CardOut, CardStatus, DeckIn, DeckOut, DeckPatch, MergeIn, MergeOut
+import logging
+
+from starlette.concurrency import run_in_threadpool
+
+from app.api.deps import get_cfg, get_choice_limiter, get_library, get_llm_factory
+from app.api.models import (
+    CardIn,
+    CardOut,
+    CardStatus,
+    ChoiceSkipped,
+    ChoiceSuggestion,
+    DeckIn,
+    DeckOut,
+    DeckPatch,
+    MergeIn,
+    MergeOut,
+    SuggestChoicesIn,
+    SuggestChoicesOut,
+)
+from app.core.config import Settings
+from app.llm.choices import suggest_choices
+from app.pipeline.worker import CostCeilingExceeded, check_cost_ceiling, describe_failure
 from app.export import content_disposition, safe_filename_stem
 from app.export.anki import build_apkg
 from app.export.csv_export import build_csv
 from app.store.library import FolderNotFound, Library
 
 router = APIRouter(prefix="/decks", tags=["decks"])
+log = logging.getLogger(__name__)
+
+SUGGEST_AT_MOST = 25  # cards per request: one AI call, so one bounded cost
 
 
 @router.get("", response_model=list[DeckOut])
@@ -76,12 +99,60 @@ def merge_deck(deck_id: str, body: MergeIn, library: Library = Depends(get_libra
 def create_card(deck_id: str, body: CardIn, library: Library = Depends(get_library)):
     """Add a card you typed yourself. It is approved at once and reaches the phone on the next sync."""
     try:
-        card = library.create_card(deck_id, type=body.type, front=body.front, back=body.back)
+        card = library.create_card(deck_id, type=body.type, front=body.front, back=body.back, choices=body.choices)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     if card is None:
         raise HTTPException(404, "Deck not found")
     return card
+
+
+@router.post("/{deck_id}/suggest-choices", response_model=SuggestChoicesOut)
+async def suggest_deck_choices(
+    deck_id: str,
+    body: SuggestChoicesIn,
+    library: Library = Depends(get_library),
+    cfg: Settings = Depends(get_cfg),
+    llm_factory=Depends(get_llm_factory),
+    limiter=Depends(get_choice_limiter),
+):
+    """Ask the AI for wrong answers for multiple choice. **Nothing is saved**: these are suggestions for the user to check, edit or drop,
+    then save with `POST /cards/choices`. Only approved basic and definition cards qualify (a fill-in-the-blank card has no natural options).
+
+    With no `card_ids`, the deck's qualifying cards that have fewer wrong answers than `wrong_per_card` are used, up to 25."""
+    if library.get_deck(deck_id) is None:
+        raise HTTPException(404, "Deck not found")
+    qualifying = {c["id"]: c for c in library.list_cards(deck_id=deck_id, status="approved") if c["type"] in ("basic", "definition") and c["back"].strip()}
+    skipped: list[ChoiceSkipped] = []
+    if body.card_ids is not None:
+        chosen = [qualifying[i] for i in dict.fromkeys(body.card_ids) if i in qualifying]
+        skipped = [ChoiceSkipped(card_id=i, reason="Not an approved question or definition card in this deck.") for i in dict.fromkeys(body.card_ids) if i not in qualifying]
+    else:
+        chosen = [c for c in qualifying.values() if len(c["choices"]) < body.wrong_per_card][:SUGGEST_AT_MOST]
+    if not chosen:
+        return SuggestChoicesOut(suggestions=[], skipped=skipped)
+    if not limiter.allow("choices"):
+        raise HTTPException(429, "You have asked for a lot of wrong answers in the last hour. Try again a little later.", headers={"Retry-After": "600"})
+
+    def work():
+        client = llm_factory()
+        found, not_made = suggest_choices(client, chosen, body.wrong_per_card)
+        check_cost_ceiling(0.0, client.usage, cfg.max_job_cost_usd)  # also refuses a model whose price is unknown
+        return found, not_made
+
+    try:
+        found, not_made = await run_in_threadpool(work)
+    except CostCeilingExceeded as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except Exception as exc:  # the provider's own failures, in words the user can act on
+        log.exception("Suggesting wrong answers failed")
+        raise HTTPException(502, describe_failure(exc)) from exc
+
+    by_id = {c["id"]: c for c in chosen}
+    return SuggestChoicesOut(
+        suggestions=[ChoiceSuggestion(card_id=i, front=by_id[i]["front"], answer=by_id[i]["back"], wrong_answers=w) for i, w in found.items()],
+        skipped=skipped + [ChoiceSkipped(card_id=i, reason=r) for i, r in not_made.items()],
+    )
 
 
 @router.get("/{deck_id}/export")

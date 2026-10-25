@@ -1,6 +1,6 @@
 import { Stack, router } from 'expo-router';
 import { useState } from 'react';
-import { Platform, StyleSheet, TextInput, View } from 'react-native';
+import { Platform, StyleSheet, Switch, TextInput, View } from 'react-native';
 
 import { ApiClient, ApiError, insecureUrlProblem, normalizeBaseUrl } from '@/api/client';
 import { ThemedText } from '@/components/themed-text';
@@ -12,7 +12,8 @@ import { useAppearance } from '@/lib/appearance-provider';
 import { confirm } from '@/lib/confirm';
 import { plural } from '@/lib/format';
 import { useSettings } from '@/lib/settings';
-import { useNewPerDay, usePendingReviews, useSetNewPerDay } from '@/study/hooks';
+import { CHOICE_COUNTS } from '@/lib/choices';
+import { useChoicePrefs, useNewPerDay, usePendingReviews, useSetChoicePrefs, useSetNewPerDay } from '@/study/hooks';
 import { useSync } from '@/sync/provider';
 
 const URL_HINT = Platform.select({ web: 'http://localhost:8000', android: 'http://10.0.2.2:8000', default: 'http://192.168.1.20:8000' });
@@ -38,6 +39,8 @@ function SettingsForm() {
   const { status: sync, sync: syncNow } = useSync();
   const newPerDay = useNewPerDay();
   const setNewPerDay = useSetNewPerDay();
+  const choicePrefs = useChoicePrefs();
+  const setChoicePrefs = useSetChoicePrefs();
   const pending = usePendingReviews();
   const [urlInput, setUrlInput] = useState(baseUrl);
   const [tokenInput, setTokenInput] = useState(token);
@@ -167,6 +170,26 @@ function SettingsForm() {
             How many cards you have never seen before are introduced each day. Reviews of cards you already know are not limited. The day starts at 4 a.m.
           </ThemedText>
 
+          <ThemedText type="smallBold">Multiple choice: options per question</ThemedText>
+          <View style={styles.choices}>
+            {CHOICE_COUNTS.map((n) => (
+              <Chip key={n} label={`${n} options`} selected={choicePrefs.data?.count === n} onPress={() => setChoicePrefs.mutate({ count: n })} />
+            ))}
+          </View>
+          <View style={styles.switchRow}>
+            <ThemedText type="small" style={styles.flex}>
+              Fill missing options from other cards in the deck
+            </ThemedText>
+            <Switch
+              accessibilityLabel="Fill missing options from other cards in the deck"
+              value={choicePrefs.data?.fillFromDeck ?? true}
+              onValueChange={(on) => setChoicePrefs.mutate({ fillFromDeck: on })}
+            />
+          </View>
+          <ThemedText type="caption" themeColor="textSecondary">
+            Turn multiple choice on or off with the switch on the study screen. A card uses its own wrong answers first; when it has fewer than needed, this borrows the answers of the deck’s other cards, so every card can be a question without typing anything.
+          </ThemedText>
+
           <ThemedText type="heading" style={styles.sectionTitle}>
             Sync
           </ThemedText>
@@ -195,4 +218,6 @@ const styles = StyleSheet.create({
   input: { minHeight: 48, borderRadius: 12, borderWidth: StyleSheet.hairlineWidth, paddingHorizontal: Spacing.three, fontSize: 16 },
   sectionTitle: { marginTop: Spacing.three },
   choices: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two },
+  switchRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
+  flex: { flex: 1 },
 });

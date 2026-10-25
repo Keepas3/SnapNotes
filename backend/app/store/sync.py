@@ -33,6 +33,13 @@ def iso_z(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%dT%H:%M:%S.") + f"{dt.microsecond // 1000:03d}Z"
 
 
+def _card_for_phone(row: Any) -> dict[str, Any]:
+    """A card row as sent to a phone: the wrong answers stored as JSON become a list."""
+    card = dict(row)
+    card["choices"] = json.loads(card.pop("choices_json", None) or "[]")
+    return card
+
+
 @dataclass
 class ReviewLogData:
     id: str
@@ -168,7 +175,7 @@ class SyncStore:
                     "SELECT id, name, topic, folder_id, updated_at, seq FROM decks WHERE seq > ? ORDER BY seq LIMIT ?", (cursor, limit)
                 ).fetchall()
                 cards = c.execute(
-                    "SELECT id, deck_id, type, front, back, origin, source_ref, source_snippet, status, created_at, updated_at, seq"
+                    "SELECT id, deck_id, type, front, back, origin, source_ref, source_snippet, status, choices_json, created_at, updated_at, seq"
                     " FROM cards WHERE seq > ? ORDER BY seq LIMIT ?",
                     (cursor, limit),
                 ).fetchall()
@@ -201,7 +208,7 @@ class SyncStore:
             has_more=bool(limited),
             folders=[dict(f) for f in folders],
             decks=[dict(d) for d in decks],
-            cards=[dict(card) for card in cards],
+            cards=[_card_for_phone(card) for card in cards],
             states=[{"card_id": s["card_id"], "last_review": s["last_review"], "state": json.loads(s["state_json"])} for s in states],
             deleted=[{"kind": t["kind"], "id": t["id"]} for t in tombs],
         )

@@ -174,7 +174,7 @@ def test_a_version_4_database_gains_folders_and_keeps_its_decks(tmp_path):
     db.init()
     db.init()  # a restart changes nothing
     with db.conn() as c:
-        assert c.execute("PRAGMA user_version").fetchone()[0] == 5
+        assert c.execute("PRAGMA user_version").fetchone()[0] == 6
         assert c.execute("SELECT name, folder_id FROM decks WHERE id = 'd1'").fetchone()["folder_id"] is None
         c.execute("INSERT INTO folders(id, name, created_at, updated_at) VALUES ('f1', 'New', 't', 't')")
         assert c.execute("SELECT seq FROM folders WHERE id = 'f1'").fetchone()[0] > 0  # the sync triggers are live

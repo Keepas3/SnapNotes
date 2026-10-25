@@ -138,6 +138,6 @@ def test_a_version_2_database_gains_an_epoch_and_keeps_its_data(tmp_path):
 
     db.init()
     with db.conn() as c:
-        assert c.execute("PRAGMA user_version").fetchone()[0] == 5
+        assert c.execute("PRAGMA user_version").fetchone()[0] == 6
         assert c.execute("SELECT name FROM decks WHERE id = ?", (deck_id,)).fetchone()[0] == "Kept"
     assert len(SyncStore(db).epoch()) == 32

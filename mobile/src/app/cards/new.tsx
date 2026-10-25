@@ -7,8 +7,10 @@ import { useCreateCard } from '@/api/hooks';
 import type { NewCard } from '@/api/types';
 import { ThemedText } from '@/components/themed-text';
 import { Banner, Button, Chip, Screen } from '@/components/ui';
+import { WrongAnswers } from '@/components/wrong-answers';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { cleanWrongAnswers, wrongAnswerProblem } from '@/lib/choices';
 import { hasCloze } from '@/lib/cloze';
 import { newCardProblem } from '@/lib/deck';
 import { plural } from '@/lib/format';
@@ -24,6 +26,7 @@ export default function NewCardScreen() {
   const [type, setType] = useState<NewCard['type']>('basic');
   const [front, setFront] = useState('');
   const [back, setBack] = useState('');
+  const [wrong, setWrong] = useState<string[]>(['', '', '']); // wrong answers for multiple choice (not for a fill-in-the-blank card)
   const [error, setError] = useState<string | null>(null);
   const [added, setAdded] = useState(0);
   const isCloze = type === 'cloze';
@@ -32,8 +35,9 @@ export default function NewCardScreen() {
 
   async function save() {
     if (!deckId) return;
-    const card: NewCard = { type, front: front.trim(), back: back.trim() };
-    const problem = newCardProblem(card);
+    const choices = isCloze ? [] : cleanWrongAnswers(wrong);
+    const card: NewCard = { type, front: front.trim(), back: back.trim(), ...(choices.length ? { choices } : {}) };
+    const problem = newCardProblem(card) ?? (isCloze ? null : wrongAnswerProblem(wrong, card.back));
     if (problem) {
       setError(problem);
       return;
@@ -44,6 +48,7 @@ export default function NewCardScreen() {
       setAdded((n) => n + 1);
       setFront('');
       setBack('');
+      setWrong(['', '', '']);
       // Bring the phone up to date so the card can be studied on it right now.
       queryClient.invalidateQueries({ queryKey: LOCAL_KEY });
       void sync();
@@ -96,6 +101,8 @@ export default function NewCardScreen() {
         placeholder={isCloze ? 'Anything you want shown with the answer' : 'It makes most of the cell’s ATP.'}
         placeholderTextColor={theme.textSecondary}
       />
+
+      {isCloze ? null : <WrongAnswers values={wrong} onChange={setWrong} />}
 
       {error ? <Banner message={error} /> : null}
       {added > 0 ? <Banner tone="success" message={`${plural(added, 'card')} added to “${where}”. Add another, or go back.`} /> : null}

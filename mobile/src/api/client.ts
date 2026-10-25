@@ -12,6 +12,7 @@ import type {
   Job,
   MergeResult,
   NewCard,
+  SuggestChoicesResult,
   SyncRequest,
   SyncResponse,
   UploadFile,
@@ -278,6 +279,20 @@ export class ApiClient {
 
   deleteCard(id: string): Promise<void> {
     return this.request('DELETE', `/cards/${id}`);
+  }
+
+  /**
+   * Ask the AI for wrong answers for multiple choice, for the named cards or the deck's cards that lack them. Nothing is saved: these are
+   * suggestions for the user to check and edit, then keep with `saveChoices`.
+   */
+  suggestChoices(deckId: string, opts: { cardIds?: string[]; wrongPerCard?: number } = {}): Promise<SuggestChoicesResult> {
+    if (!deckId) throw new Error('suggestChoices needs a deck id');
+    return this.request('POST', `/decks/${deckId}/suggest-choices`, { json: { card_ids: opts.cardIds, wrong_per_card: opts.wrongPerCard ?? 3 }, timeoutMs: 120_000 });
+  }
+
+  /** Save the wrong answers of several cards at once; all or nothing. */
+  saveChoices(items: { card_id: string; choices: string[] }[]): Promise<{ saved: number }> {
+    return this.request('POST', '/cards/choices', { json: { items } });
   }
 
   reviewCards(approveIds: string[], rejectIds: string[]): Promise<{ changed: number }> {

@@ -146,6 +146,8 @@ class Settings:
     # so two at once on a small machine could run it out of memory. Documents simply queue behind each other.
     job_concurrency: int = field(default_factory=lambda: int(_env("SNAPNOTES_JOB_CONCURRENCY", "1")))
     max_jobs_per_hour: int = field(default_factory=lambda: int(_env("SNAPNOTES_MAX_JOBS_PER_HOUR", "10")))
+    # How many "suggest wrong answers" requests (each asks the AI about up to 25 cards) are allowed per hour.
+    max_choice_requests_per_hour: int = field(default_factory=lambda: int(_env("SNAPNOTES_MAX_CHOICE_REQUESTS_PER_HOUR", "30")))
     max_job_cost_usd: float = field(default_factory=lambda: float(_env("SNAPNOTES_MAX_JOB_COST_USD", "2.0")))
     requests_per_minute: int = field(default_factory=lambda: int(_env("SNAPNOTES_REQUESTS_PER_MINUTE", "240")))
 

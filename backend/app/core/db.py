@@ -148,7 +148,7 @@ SYNC_TRIGGER_STATEMENTS = [
     _tombstone_trigger("decks", "deck"),
     _tombstone_trigger("cards", "card"),
 ]
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 # Schema version 5: folders that group decks. A folder syncs like a deck (a change counter stamp, a tombstone on delete), and a deck
 # names its folder in `folder_id` (NULL: not in a folder). Written so running it twice is harmless.
@@ -225,6 +225,10 @@ class Database:
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_decks_folder ON decks(folder_id)")
                 for statement in FOLDER_TRIGGER_STATEMENTS:
                     conn.execute(statement)
+            if version < 6:
+                # Version 6: the wrong answers of a card, for multiple choice (a JSON list of strings; the right answer is the card's back).
+                if "choices_json" not in {row[1] for row in conn.execute("PRAGMA table_info(cards)")}:
+                    conn.execute("ALTER TABLE cards ADD COLUMN choices_json TEXT NOT NULL DEFAULT '[]'")
             conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             conn.execute("COMMIT")
         except BaseException:

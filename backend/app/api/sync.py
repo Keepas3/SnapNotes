@@ -89,6 +89,7 @@ class SyncCard(BaseModel):
     source_ref: str
     source_snippet: str
     status: Literal["draft", "approved", "rejected"]
+    choices: list[str] = Field(default_factory=list)  # wrong answers for multiple choice
     created_at: str
     updated_at: str
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.deps import get_library
-from app.api.models import CardOut, CardPatch, ReviewIn, ReviewOut
+from app.api.models import CardOut, CardPatch, ChoicesBatchIn, ChoicesBatchOut, ReviewIn, ReviewOut
 from app.store.library import Library
 
 router = APIRouter(prefix="/cards", tags=["cards"])
@@ -14,6 +14,17 @@ router = APIRouter(prefix="/cards", tags=["cards"])
 def review_cards(body: ReviewIn, library: Library = Depends(get_library)):
     """Bulk approve/reject after swiping through a draft deck."""
     return {"changed": library.review(body.approve_ids, body.reject_ids)}
+
+
+@router.post("/choices", response_model=ChoicesBatchOut)
+def save_choices(body: ChoicesBatchIn, library: Library = Depends(get_library)):
+    """Save the wrong answers of several cards at once, all or nothing. Used after the user has checked suggested answers."""
+    try:
+        return {"saved": library.set_choices((item.card_id, item.choices) for item in body.items)}
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(404, "One of the cards no longer exists.") from exc
 
 
 @router.get("/{card_id}", response_model=CardOut)

@@ -71,6 +71,17 @@ Each deck on the home screen has two small buttons: the **✕** at the top right
 
 All of these need a connection, like rename and delete, because the server holds the library; studying stays offline.
 
+## Multiple choice
+
+Turn a flashcard into a multiple choice question with the **Multiple choice** switch at the top of the study screen (remembered on this phone). With it on, each question shows 4 or 5 options under the card (set in **Settings → Studying**, default 4):
+
+- **Pick one:** the right answer turns green, a wrong pick turns red with the right one shown, and the usual four rating buttons appear with the sensible one **suggested** (Got it after a right pick, Missed it after a wrong one). You still rate yourself, so a lucky guess does not count as knowing it. **I don't know** (or tapping the card) shows the answer with no suggestion, and swiping works as before.
+- **Where the wrong options come from:** the card's own wrong answers first, then, if it has too few, answers borrowed from the **other cards in the same deck** (about as long as the right one, never a copy of it; switch this off in Settings). A card that still cannot make a sensible question (for example the deck has only one card) is studied the usual way, and so is every fill-in-the-blank card.
+- **Writing them yourself:** a **Wrong answers** section in the card editor and on the Add a card screen, with up to 4 fields. The right answer is the card's back, and a wrong answer that matches it is refused.
+- **Having the AI suggest them:** **Suggest with AI** in the card editor (one card, fills the fields for you to edit), or **Multiple choice answers** on a deck's page: it suggests for the cards that lack them, shows each suggestion editable with a switch to leave it out, and saves only what you keep. The free AI can write weak wrong answers, which is why you always review them first; typing them or borrowing from other cards does not need the AI.
+
+All the multiple choice settings live on this phone only; the wrong answers themselves are part of the card, so they sync like the rest of the library. Suggesting needs a connection; studying does not.
+
 ## Folders
 
 Folders group decks on the same subject, such as **Biology** holding Bio I and Bio II, or **Programming** holding Python, SQL and Git. They are kept on the server and synced like decks, so a new phone sees them too.

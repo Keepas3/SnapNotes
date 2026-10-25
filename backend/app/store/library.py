@@ -30,8 +30,41 @@ def new_id() -> str:
     return uuid.uuid4().hex
 
 
+MAX_CHOICES = 6  # wrong answers kept per card: the app shows at most 4 of them next to the right one
+MAX_CHOICE_LENGTH = 200
+
+
+def _same_text(a: str, b: str) -> bool:
+    """Equal ignoring case, spacing and punctuation: 'Mitochondria.' and ' mitochondria ' are the same answer."""
+    def norm(text: str) -> str:
+        return re.sub(r"\s+", " ", re.sub(r"[^\w\s]", " ", text.casefold())).strip()
+
+    return norm(a) == norm(b)
+
+
+def clean_choices(choices: Iterable[str], correct: str, card_type: str) -> list[str]:
+    """The wrong answers to store for a card: trimmed, with blanks and repeats dropped. Raises ValueError (a sentence for the user)
+    when one is the right answer, is too long, there are too many, or the card is fill-in-the-blank (no options for those)."""
+    cleaned: list[str] = []
+    for raw in choices:
+        text = " ".join(str(raw).split())
+        if not text or any(_same_text(text, kept) for kept in cleaned):
+            continue
+        if len(text) > MAX_CHOICE_LENGTH:
+            raise ValueError(f"Keep each wrong answer under {MAX_CHOICE_LENGTH} characters.")
+        if _same_text(text, correct):
+            raise ValueError(f"“{text[:40]}” is the right answer, so it cannot be one of the wrong ones.")
+        cleaned.append(text)
+    if cleaned and card_type == "cloze":
+        raise ValueError("Multiple choice is not available for fill-in-the-blank cards.")
+    if len(cleaned) > MAX_CHOICES:
+        raise ValueError(f"A card can have at most {MAX_CHOICES} wrong answers.")
+    return cleaned
+
+
 def card_from_row(row: sqlite3.Row) -> dict[str, Any]:
     d = dict(row)
+    d["choices"] = json.loads(d.pop("choices_json", None) or "[]")
     d["tags"] = json.loads(d.pop("tags_json"))
     d["atomic"] = bool(d["atomic"])
     d["grounded"] = bool(d["grounded"])
@@ -204,6 +237,14 @@ class Library:
         if fields.get("tags") is not None:
             sets.append("tags_json = ?")
             args.append(json.dumps(fields["tags"]))
+        if fields.get("choices") is not None:
+            existing = self.get_card(card_id)
+            if existing is None:
+                return None
+            # Checked against the right answer the card will have after this edit.
+            correct = fields["back"] if fields.get("back") is not None else existing["back"]
+            sets.append("choices_json = ?")
+            args.append(json.dumps(clean_choices(fields["choices"], correct, existing["type"])))
         if not sets:
             return self.get_card(card_id)
         sets.append("updated_at = ?")
@@ -213,7 +254,21 @@ class Library:
                 return None
         return self.get_card(card_id)
 
-    def create_card(self, deck_id: str, *, type: str, front: str, back: str = "") -> dict[str, Any] | None:
+    def set_choices(self, items: Iterable[tuple[str, list[str]]]) -> int:
+        """Save the wrong answers of several cards at once, all or nothing (so a reviewed deck is never half saved). Raises ValueError
+        for a refused answer and LookupError for a card that does not exist; returns how many cards were saved."""
+        saved = 0
+        with self.db.tx() as c:
+            for card_id, choices in items:
+                row = c.execute("SELECT type, back FROM cards WHERE id = ?", (card_id,)).fetchone()
+                if row is None:
+                    raise LookupError(card_id)
+                cleaned = clean_choices(choices, row["back"], row["type"])
+                c.execute("UPDATE cards SET choices_json = ?, updated_at = ? WHERE id = ?", (json.dumps(cleaned), now(), card_id))
+                saved += 1
+        return saved
+
+    def create_card(self, deck_id: str, *, type: str, front: str, back: str = "", choices: Iterable[str] = ()) -> dict[str, Any] | None:
         """A card the user typed in. It is approved straight away (there is nothing to review), has no job, and is marked
         `origin = "manual"`. Returns None for an unknown deck; raises ValueError (a sentence for the user) for bad text."""
         front, back = front.strip(), back.strip()
@@ -226,15 +281,16 @@ class Library:
                 raise ValueError("A fill-in-the-blank card needs a blank: wrap the answer like {{c1::answer}}.")
         elif not back:
             raise ValueError("Write the back of the card.")
+        wrong = clean_choices(choices, back, type)
         card_id, ts = new_id(), now()
         with self.db.tx() as c:
             if c.execute("SELECT 1 FROM decks WHERE id = ?", (deck_id,)).fetchone() is None:
                 return None
             c.execute(
                 "INSERT INTO cards(id, deck_id, job_id, type, front, back, origin, source_ref, source_snippet, tags_json,"
-                " difficulty, status, atomic, grounded, issue, duplicate_of, created_at, updated_at)"
-                " VALUES (?,?,NULL,?,?,?,'manual',?,'','[]','medium','approved',1,1,'',NULL,?,?)",
-                (card_id, deck_id, type, front, back, MANUAL_SOURCE, ts, ts),
+                " difficulty, status, atomic, grounded, issue, duplicate_of, created_at, updated_at, choices_json)"
+                " VALUES (?,?,NULL,?,?,?,'manual',?,'','[]','medium','approved',1,1,'',NULL,?,?,?)",
+                (card_id, deck_id, type, front, back, MANUAL_SOURCE, ts, ts, json.dumps(wrong)),
             )
             c.execute("UPDATE decks SET updated_at = ? WHERE id = ?", (ts, deck_id))
         return self.get_card(card_id)

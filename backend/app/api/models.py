@@ -77,6 +77,7 @@ class CardOut(BaseModel):
     grounded: bool
     issue: str
     duplicate_of: str | None
+    choices: list[str] = Field(default_factory=list, description="Wrong answers for multiple choice; the right answer is `back`")
     created_at: str
     updated_at: str
 
@@ -87,6 +88,7 @@ class CardPatch(BaseModel):
     tags: list[str] | None = None
     difficulty: Literal["easy", "medium", "hard"] | None = None
     status: CardStatus | None = None
+    choices: list[str] | None = Field(default=None, max_length=20, description="Replaces the card's wrong answers (an empty list clears them)")
 
 
 class ReviewIn(BaseModel):
@@ -153,3 +155,39 @@ class CardIn(BaseModel):
     type: Literal["basic", "cloze"] = "basic"
     front: str = Field(max_length=2000)
     back: str = Field(default="", max_length=2000)
+    choices: list[str] = Field(default_factory=list, max_length=20)  # wrong answers for multiple choice (not for fill-in-the-blank)
+
+
+class ChoicesIn(BaseModel):
+    card_id: str = Field(min_length=1)
+    choices: list[str] = Field(max_length=20)
+
+
+class ChoicesBatchIn(BaseModel):
+    items: list[ChoicesIn] = Field(min_length=1, max_length=100)
+
+
+class ChoicesBatchOut(BaseModel):
+    saved: int
+
+
+class SuggestChoicesIn(BaseModel):
+    card_ids: list[str] | None = Field(default=None, max_length=25, description="Which cards; leave out for the deck's cards that lack wrong answers")
+    wrong_per_card: int = Field(default=3, ge=2, le=4)
+
+
+class ChoiceSuggestion(BaseModel):
+    card_id: str
+    front: str
+    answer: str
+    wrong_answers: list[str]
+
+
+class ChoiceSkipped(BaseModel):
+    card_id: str
+    reason: str
+
+
+class SuggestChoicesOut(BaseModel):
+    suggestions: list[ChoiceSuggestion]
+    skipped: list[ChoiceSkipped]

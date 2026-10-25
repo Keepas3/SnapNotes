@@ -25,3 +25,11 @@ def get_worker(request: Request) -> JobWorker:
 
 def get_sync_store(request: Request) -> SyncStore:
     return request.app.state.sync_store
+
+
+def get_llm_factory(request: Request):
+    return request.app.state.llm_factory
+
+
+def get_choice_limiter(request: Request):
+    return request.app.state.choice_limiter

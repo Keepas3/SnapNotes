@@ -6,6 +6,7 @@ for the deck title, which is taken from the first line of text notes.
 """
 from __future__ import annotations
 
+import json
 import re
 import time
 from types import SimpleNamespace
@@ -16,6 +17,8 @@ from app.llm.schemas import (
     CardSet,
     CardVerdict,
     CardVerdictChecked,
+    ChoiceItem,
+    ChoiceSet,
     UnderstandResult,
     UnderstandResultChecked,
     VerifyResult,
@@ -73,6 +76,9 @@ DEMO_AI_CARD = _card(
 # What the fact check would say about a card (card index -> concern), used only when SNAPNOTES_FACT_CHECK=1 in demo mode.
 DEMO_CONCERNS = {3: "Rare cases of paternal inheritance of mitochondrial DNA have been reported, so 'only the mother' is a simplification."}
 
+# Wrong answers the demo offers for any card when asked for multiple choice options.
+DEMO_WRONG = ["The nucleus", "The Golgi apparatus", "Chloroplasts", "The cell wall", "Lysosomes", "Vacuoles"]
+
 # (claim, url, title, passage the claim rests on)
 DEMO_EVIDENCE = [
     ("Mitochondrial DNA is inherited almost exclusively from the mother.", _WIKI + "Mitochondrial_DNA", "Mitochondrial DNA - Wikipedia", "In most multicellular organisms, mtDNA is inherited from the mother (maternally inherited)."),
@@ -125,6 +131,19 @@ class _Namespace:
                 for i in range(count)
             ])
             usage = _usage(2600, 300)
+        elif model is ChoiceSet:
+            # Wrong answers for suggested multiple choice: a fixed pool, rotated per card so neighbouring cards differ.
+            text = _last_text(kw["messages"])
+            cards = json.loads(text.split("<cards>", 1)[1].split("</cards>", 1)[0])
+            wanted = int(re.search(r"exactly (\d+) `wrong_answers`", text).group(1)) if re.search(r"exactly (\d+) `wrong_answers`", text) else 3
+            out = ChoiceSet(items=[
+                ChoiceItem(
+                    index=c["index"],
+                    wrong_answers=[a for a in (DEMO_WRONG[(c["index"] + k) % len(DEMO_WRONG)] for k in range(len(DEMO_WRONG))) if a.lower() != c["back"].lower()][:wanted],
+                )
+                for c in cards
+            ])
+            usage = _usage(500, 120)
         else:  # pragma: no cover - guards against a new stage being added without demo data
             raise NotImplementedError(f"No demo data for {model}")
         return SimpleNamespace(parsed_output=out, usage=usage, stop_reason="end_turn", content=[], stop_details=None)

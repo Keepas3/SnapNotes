@@ -81,6 +81,8 @@ def create_app(cfg: Settings | None = None, llm_factory: Callable[[], LLM] | Non
     app.state.library = library
     app.state.sync_store = SyncStore(db)
     app.state.worker = worker
+    app.state.llm_factory = llm_factory  # also used by requests that ask the AI directly (suggested wrong answers)
+    app.state.choice_limiter = SlidingWindowLimiter(cfg.max_choice_requests_per_hour, window_seconds=3600.0)
 
     @app.middleware("http")
     async def rate_limit(request: Request, call_next):

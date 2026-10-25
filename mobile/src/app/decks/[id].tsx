@@ -157,6 +157,13 @@ export default function DeckScreen() {
         ))
       )}
 
+      <Section title="Multiple choice">
+        <ThemedText type="caption" themeColor="textSecondary">
+          Give your cards wrong answers so you can study them as multiple choice questions. Write them yourself or have the AI suggest some to check.
+        </ThemedText>
+        <Button title="Multiple choice answers" variant="secondary" disabled={d.counts.approved === 0} onPress={() => router.push({ pathname: '/choices/[deckId]', params: { deckId: id } })} />
+      </Section>
+
       <Section title="Export">
         <ThemedText type="caption" themeColor="textSecondary">
           Approved cards only. In Anki they arrive as new cards (your study history stays in SnapNotes), and importing the same deck again updates the cards

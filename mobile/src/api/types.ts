@@ -76,6 +76,8 @@ export interface Card {
   grounded: boolean;
   issue: string;
   duplicate_of: string | null;
+  /** Wrong answers for multiple choice (the right answer is `back`); absent from older servers. */
+  choices?: string[];
   created_at: string;
   updated_at: string;
 }
@@ -86,6 +88,8 @@ export interface CardPatch {
   tags?: string[];
   difficulty?: Difficulty;
   status?: CardStatus;
+  /** Replaces the card's wrong answers; an empty list clears them. */
+  choices?: string[];
 }
 
 /** A card typed in by hand. A fill-in-the-blank card needs a {{c1::blank}} in its front and may leave the back empty. */
@@ -93,6 +97,21 @@ export interface NewCard {
   type: Exclude<CardType, 'definition'>;
   front: string;
   back: string;
+  /** Wrong answers for multiple choice (not for a fill-in-the-blank card). */
+  choices?: string[];
+}
+
+/** The AI's suggested wrong answers for one card. Nothing is saved until the user has looked at them. */
+export interface ChoiceSuggestion {
+  card_id: string;
+  front: string;
+  answer: string;
+  wrong_answers: string[];
+}
+
+export interface SuggestChoicesResult {
+  suggestions: ChoiceSuggestion[];
+  skipped: { card_id: string; reason: string }[];
 }
 
 /** A folder that groups decks (Biology > Bio I, Bio II). `deck_count` counts the decks filed in it. */
@@ -166,6 +185,8 @@ export interface SyncCard {
   source_ref: string;
   source_snippet: string;
   status: CardStatus;
+  /** Wrong answers for multiple choice; absent from servers that predate it. */
+  choices?: string[];
   created_at: string;
   updated_at: string;
 }

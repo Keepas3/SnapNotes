@@ -193,6 +193,22 @@ export function useMergeDecks() {
   });
 }
 
+/** Ask the AI for wrong answers. Saves nothing, so it changes no cached data. */
+export function useSuggestChoices() {
+  const api = useApi();
+  return useMutation({
+    mutationFn: ({ deckId, cardIds, wrongPerCard }: { deckId: string; cardIds?: string[]; wrongPerCard?: number }) =>
+      api.suggestChoices(deckId, { cardIds, wrongPerCard }),
+  });
+}
+
+/** Keep the wrong answers the user has checked. */
+export function useSaveChoices() {
+  const api = useApi();
+  const invalidate = useInvalidateLibrary();
+  return useMutation({ mutationFn: (items: { card_id: string; choices: string[] }[]) => api.saveChoices(items), onSuccess: invalidate });
+}
+
 /** Add a card typed by hand to a deck. */
 export function useCreateCard() {
   const api = useApi();
