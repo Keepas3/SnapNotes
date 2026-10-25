@@ -2,7 +2,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { LOCAL_KEY, useSync } from '@/sync/provider';
 
-import type { ChoicePrefs, DeckSummary, FolderSummary, StudyCounts, StudyScope } from './store';
+import type { SchedulingOptions } from './scheduler';
+import type { CardStat, ChoicePrefs, DeckSummary, FolderSummary, StudyCounts, StudyScope } from './store';
 
 /** Reads from the on-device database. They work offline and refetch after every sync or study answer. */
 
@@ -127,6 +128,48 @@ export function useSetClosedFolders() {
     mutationFn: (ids: string[]) => store!.setClosedFolders(ids),
     onMutate: (ids) => qc.setQueryData(key, ids), // open or close it at once; the save follows
     onSettled: () => qc.invalidateQueries({ queryKey: key }),
+  });
+}
+
+/** How cards are scheduled on this phone: the chance of remembering to aim for, and whether longer intervals are spread. */
+export function useSchedulingPrefs() {
+  const { store } = useSync();
+  return useQuery<SchedulingOptions>({
+    queryKey: [...LOCAL_KEY, 'schedulingPrefs'],
+    queryFn: () => store!.schedulingPrefs(),
+    enabled: store !== null,
+  });
+}
+
+export function useSetSchedulingPrefs() {
+  const { store } = useSync();
+  const qc = useQueryClient();
+  const key = [...LOCAL_KEY, 'schedulingPrefs'];
+  return useMutation({
+    mutationFn: (change: Partial<SchedulingOptions>) => store!.setSchedulingPrefs(change),
+    onMutate: (change) => qc.setQueryData<SchedulingOptions>(key, (old) => ({ retention: 0.9, spread: true, ...old, ...change })), // apply at once; the save follows
+    onSettled: () => qc.invalidateQueries({ queryKey: key }),
+  });
+}
+
+/** Missed-count and paused state of each card in a deck (what the phone knows; empty until cards are synced). */
+export function useCardStats(deckId: string) {
+  const { store } = useSync();
+  return useQuery<CardStat[]>({
+    queryKey: [...LOCAL_KEY, 'cardStats', deckId],
+    queryFn: () => store!.cardStats(deckId),
+    enabled: store !== null,
+    staleTime: 0,
+  });
+}
+
+/** Pause or resume a card. Everything that counts cards is read again afterwards. */
+export function usePauseCard() {
+  const { store } = useSync();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ cardId, paused }: { cardId: string; paused: boolean }) => (paused ? store!.pauseCard(cardId) : store!.resumeCard(cardId)),
+    onSettled: () => qc.invalidateQueries({ queryKey: LOCAL_KEY }),
   });
 }
 

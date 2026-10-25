@@ -8,7 +8,7 @@ describe('local database', () => {
     const v = await db.first<{ user_version: number }>('PRAGMA user_version');
     expect(v?.user_version).toBe(MIGRATIONS.length);
     const tables = await db.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name");
-    expect(tables.map((t) => t.name)).toEqual(['cards', 'decks', 'folders', 'meta', 'review_logs']);
+    expect(tables.map((t) => t.name)).toEqual(['card_flags', 'cards', 'decks', 'folders', 'meta', 'review_logs']);
   });
 
   it('rolls a transaction back when it throws', async () => {

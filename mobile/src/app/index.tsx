@@ -300,12 +300,12 @@ function FolderRow({
       <ThemedText type="small" themeColor="textSecondary">
         {folderSubtitle(folder.decks, folder.total)} · {parts.length ? parts.join(' · ') : folder.total > 0 ? 'nothing due' : 'empty'}
       </ThemedText>
-      {folder.total > 0 ? (
+      {folder.total - folder.paused > 0 ? (
         <View style={styles.studyButtons}>
           {due + fresh > 0 ? (
             <Button title={`Study folder (${due + fresh})`} variant="secondary" style={styles.flex} onPress={() => router.push({ pathname: '/study/[deckId]', params: { deckId: studyParam({ folderId: folder.id }) } })} />
           ) : null}
-          <Button title={`All ${folder.total}`} variant="ghost" style={styles.flex} onPress={() => router.push({ pathname: '/study/[deckId]', params: { deckId: studyParam({ folderId: folder.id }), mode: 'all' } })} />
+          <Button title={`All ${folder.total - folder.paused}`} variant="ghost" style={styles.flex} onPress={() => router.push({ pathname: '/study/[deckId]', params: { deckId: studyParam({ folderId: folder.id }), mode: 'all' } })} />
         </View>
       ) : null}
     </Card>
@@ -412,18 +412,20 @@ function DeckRow({ deck, drafts, onMove }: { deck: DeckSummary; drafts: number; 
         ) : null}
         <View style={styles.rowBetween}>
           <ThemedText type="small" themeColor="textSecondary" style={styles.flex}>
-            {plural(deck.total, 'card')} · {parts.length ? parts.join(' · ') : deck.total > 0 ? 'nothing due' : 'none approved yet'}
+            {plural(deck.total, 'card')} · {parts.length ? parts.join(' · ') : deck.total > deck.paused ? 'nothing due' : deck.total > 0 ? 'all paused' : 'none approved yet'}
+            {deck.problem > 0 ? ` · ${plural(deck.problem, 'problem card')}` : ''}
+            {deck.paused > 0 && deck.total > deck.paused ? ` · ${deck.paused} paused` : ''}
           </ThemedText>
           {drafts > 0 ? <Badge label={`${drafts} to review`} tone="warning" /> : null}
         </View>
       </Pressable>
       {error ? <Banner message={error} /> : null}
-      {deck.total > 0 ? (
+      {deck.total - deck.paused > 0 ? (
         <View style={styles.studyButtons}>
           {studyable > 0 ? (
             <Button title={`Study (${studyable})`} variant="secondary" style={styles.flex} onPress={() => router.push({ pathname: '/study/[deckId]', params: { deckId: deck.id } })} />
           ) : null}
-          <Button title={`All ${deck.total}`} variant="ghost" style={styles.flex} onPress={() => router.push({ pathname: '/study/[deckId]', params: { deckId: deck.id, mode: 'all' } })} />
+          <Button title={`All ${deck.total - deck.paused}`} variant="ghost" style={styles.flex} onPress={() => router.push({ pathname: '/study/[deckId]', params: { deckId: deck.id, mode: 'all' } })} />
         </View>
       ) : null}
       <DeckSettingsSheet deck={settingsOpen ? { id: deck.id, name: deck.name, folderId: deck.folder_id } : null} onClose={() => setSettingsOpen(false)} onChanged={refreshPhone} />

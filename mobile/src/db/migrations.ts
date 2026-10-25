@@ -65,6 +65,13 @@ export const MIGRATIONS: string[] = [
   `
   ALTER TABLE cards ADD COLUMN choices_json TEXT NOT NULL DEFAULT '[]';
   `,
+  // Version 4: cards the user has paused. Kept on this phone only, apart from the cards so a re-download of them leaves it alone.
+  `
+  CREATE TABLE card_flags (
+    card_id TEXT PRIMARY KEY,
+    paused INTEGER NOT NULL DEFAULT 0
+  );
+  `,
 ];
 
 export async function migrate(db: Db): Promise<void> {

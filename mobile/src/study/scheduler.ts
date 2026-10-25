@@ -1,4 +1,4 @@
-import { createEmptyCard, fsrs, generatorParameters, Rating, type Card, type Grade, State } from 'ts-fsrs';
+import { createEmptyCard, fsrs, GenSeedStrategyWithCardId, generatorParameters, Rating, StrategyMode, type Card, type Grade, State } from 'ts-fsrs';
 
 import type { FsrsState } from '@/api/types';
 
@@ -22,14 +22,41 @@ export function ratingForSwipe(direction: 'left' | 'right'): RatingValue {
 
 export const CardState = { New: 0, Learning: 1, Review: 2, Relearning: 3 } as const;
 
-/**
- * FSRS with its default parameters and 90% target retention. Fuzzing is off so a given history always produces the
- * same schedule, which keeps results reproducible and testable.
- */
-const algorithm = fsrs(generatorParameters({ request_retention: 0.9, maximum_interval: 36500, enable_fuzz: false }));
+/** How sure to be of remembering a card when it comes back, as a share. 0.9 means about 9 in 10 are still remembered. */
+export const DEFAULT_RETENTION = 0.9;
+export const RETENTION_CHOICES = [0.8, 0.85, 0.9, 0.95] as const;
 
-function toCard(s: FsrsState): Card {
-  return {
+export interface SchedulingOptions {
+  /** the chance of still remembering a card at the moment it is due */
+  retention: number;
+  /** nudge longer intervals a little so cards learned together do not all come back on the same day */
+  spread: boolean;
+}
+
+/** Today's behaviour: 90%, no spreading. Anything that passes no options gets exactly this. */
+export const DEFAULT_SCHEDULING: SchedulingOptions = { retention: DEFAULT_RETENTION, spread: false };
+
+const algorithms = new Map<string, ReturnType<typeof fsrs>>();
+
+/**
+ * FSRS with the default parameters and the given retention. Without spreading the result is a pure function of the card's history,
+ * which keeps results reproducible and testable. With it, the nudge is seeded by the card's id and review count, so the time shown
+ * under a button is the time the card really gets.
+ */
+function algorithmFor({ retention, spread }: SchedulingOptions) {
+  const key = `${retention}:${spread}`;
+  let algorithm = algorithms.get(key);
+  if (!algorithm) {
+    algorithm = fsrs(generatorParameters({ request_retention: retention, maximum_interval: 36500, enable_fuzz: spread }));
+    if (spread) algorithm.useStrategy(StrategyMode.SEED, GenSeedStrategyWithCardId('card_id'));
+    algorithms.set(key, algorithm);
+  }
+  return algorithm;
+}
+
+function toCard(s: FsrsState, cardId = ''): Card {
+  const card: Card & { card_id: string } = {
+    card_id: cardId, // read by the seed strategy when spreading is on; ignored otherwise
     due: new Date(s.due),
     stability: s.stability,
     difficulty: s.difficulty,
@@ -41,6 +68,7 @@ function toCard(s: FsrsState): Card {
     state: s.state as State,
     last_review: s.last_review ? new Date(s.last_review) : undefined,
   };
+  return card;
 }
 
 function fromCard(c: Card): FsrsState {
@@ -64,19 +92,44 @@ export function newState(now: Date): FsrsState {
 }
 
 /** The card's new schedule after answering with `rating` at time `now`. */
-export function reviewCard(state: FsrsState, rating: RatingValue, now: Date): FsrsState {
-  return fromCard(algorithm.next(toCard(state), now, rating as Grade).card);
+export function reviewCard(state: FsrsState, rating: RatingValue, now: Date, options: SchedulingOptions = DEFAULT_SCHEDULING, cardId = ''): FsrsState {
+  return fromCard(algorithmFor(options).next(toCard(state, cardId), now, rating as Grade).card);
 }
 
 /** When the card would next be due for each possible answer; used for the button labels. */
-export function previewDue(state: FsrsState, now: Date): Record<RatingValue, Date> {
-  const preview = algorithm.repeat(toCard(state), now);
+export function previewDue(state: FsrsState, now: Date, options: SchedulingOptions = DEFAULT_SCHEDULING, cardId = ''): Record<RatingValue, Date> {
+  const preview = algorithmFor(options).repeat(toCard(state, cardId), now);
   return {
     1: preview[Rating.Again].card.due,
     2: preview[Rating.Hard].card.due,
     3: preview[Rating.Good].card.due,
     4: preview[Rating.Easy].card.due,
   };
+}
+
+/** The chance, from 0 to 1, that a card that has been studied is still remembered at `now`. A card never studied counts as 0. */
+export function chanceRemembered(state: FsrsState, now: Date): number {
+  if (state.state === CardState.New || !state.last_review) return 0;
+  const days = Math.max(0, (now.getTime() - new Date(state.last_review).getTime()) / 86_400_000);
+  return algorithmFor(DEFAULT_SCHEDULING).forgetting_curve(days, Math.max(state.stability, 0.01));
+}
+
+/**
+ * The card most worth reviewing first: the one least likely to be remembered right now, which weighs how long ago it was seen against how
+ * strongly it is known. A card due three days ago that was known well can wait behind one due yesterday that was barely known. Ties go to the
+ * older due date. Returns the index in `items`, or -1 when there are none.
+ */
+export function mostForgotten<T extends { fsrs: FsrsState }>(items: T[], now: Date): number {
+  let best = -1;
+  let bestChance = Infinity;
+  items.forEach((item, i) => {
+    const chance = chanceRemembered(item.fsrs, now);
+    if (chance < bestChance - 1e-12 || (Math.abs(chance - bestChance) <= 1e-12 && best >= 0 && item.fsrs.due < items[best].fsrs.due)) {
+      best = i;
+      bestChance = chance;
+    }
+  });
+  return best;
 }
 
 const count = (n: number, unit: string) => `${n} ${unit}${n === 1 ? '' : 's'}`;

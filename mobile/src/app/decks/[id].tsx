@@ -17,7 +17,8 @@ import { describeExportFailure, EXPORT_FORMATS, exportFileName, type ExportForma
 import { plural } from '@/lib/format';
 import { originBadge } from '@/lib/origin';
 import { useApi } from '@/lib/settings';
-import { useStudyCounts } from '@/study/hooks';
+import { useCardStats, usePauseCard, useStudyCounts } from '@/study/hooks';
+import { PROBLEM_LAPSES } from '@/study/store';
 import { LOCAL_KEY, useSync } from '@/sync/provider';
 
 export default function DeckScreen() {
@@ -30,6 +31,8 @@ export default function DeckScreen() {
   const cards = useDeckCards(id, filter);
   const drafts = useDeckCards(id, 'draft'); // also tells us which job to open for review
   const study = useStudyCounts(id); // from the on-device database
+  const stats = useCardStats(id); // how often each card was missed, and which are paused
+  const pause = usePauseCard();
   const remove = useDeleteDeck();
 
   // Cards approved or edited a moment ago reach the phone through a sync.
@@ -63,6 +66,9 @@ export default function DeckScreen() {
   }
 
   const d = deck.data;
+  const statById = new Map((stats.data ?? []).map((s) => [s.id, s]));
+  const problem = (stats.data ?? []).filter((s) => !s.paused && s.lapses >= PROBLEM_LAPSES).length;
+  const paused = (stats.data ?? []).filter((s) => s.paused).length;
   const reviewJobId = drafts.data?.find((c) => c.job_id)?.job_id ?? null;
   const studyable = (study.data?.new ?? 0) + (study.data?.learning ?? 0) + (study.data?.review ?? 0);
 
@@ -129,6 +135,12 @@ export default function DeckScreen() {
         </ThemedText>
       ) : null}
 
+      {problem + paused > 0 ? (
+        <ThemedText type="caption" themeColor="textSecondary">
+          {[problem > 0 && `${plural(problem, 'problem card')} (missed ${PROBLEM_LAPSES} or more times)`, paused > 0 && `${paused} paused`].filter(Boolean).join(' · ')}. Paused cards are not offered for study until you resume them here.
+        </ThemedText>
+      ) : null}
+
       <View style={styles.chips}>
         <Chip label={`Approved (${d.counts.approved})`} selected={filter === 'approved'} onPress={() => setFilter('approved')} />
         <Chip label={`To review (${d.counts.draft})`} selected={filter === 'draft'} onPress={() => setFilter('draft')} />
@@ -145,16 +157,31 @@ export default function DeckScreen() {
           message={filter === 'approved' ? 'Approve cards while reviewing and they will appear here.' : undefined}
         />
       ) : (
-        cards.data.map((card) => (
-          <Panel key={card.id} accessibilityLabel={`Edit card: ${card.front}`} onPress={() => setEditing(card)}>
-            <ThemedText type="smallBold">{card.type === 'cloze' ? clozeQuestion(card.front) : card.front}</ThemedText>
-            <View style={styles.badges}>
-              <Badge {...originBadge(card.origin)} />
-              <Badge label={card.type} />
-              {card.issue ? <Badge label={card.issue} tone="warning" /> : null}
+        cards.data.map((card) => {
+          const stat = filter === 'approved' ? statById.get(card.id) : undefined;
+          return (
+            <View key={card.id} style={styles.cardBlock}>
+              <Panel accessibilityLabel={`Edit card: ${card.front}`} onPress={() => setEditing(card)}>
+                <ThemedText type="smallBold">{card.type === 'cloze' ? clozeQuestion(card.front) : card.front}</ThemedText>
+                <View style={styles.badges}>
+                  <Badge {...originBadge(card.origin)} />
+                  <Badge label={card.type} />
+                  {stat?.paused ? <Badge label="Paused" /> : null}
+                  {stat && stat.lapses >= PROBLEM_LAPSES ? <Badge label={`Missed ${stat.lapses} times`} tone="warning" /> : null}
+                  {card.issue ? <Badge label={card.issue} tone="warning" /> : null}
+                </View>
+              </Panel>
+              {stat ? (
+                <Button
+                  title={stat.paused ? 'Resume this card' : 'Pause this card'}
+                  variant="ghost"
+                  disabled={pause.isPending}
+                  onPress={() => pause.mutate({ cardId: card.id, paused: !stat.paused })}
+                />
+              ) : null}
             </View>
-          </Panel>
-        ))
+          );
+        })
       )}
 
       <Section title="Multiple choice">
@@ -199,4 +226,5 @@ const styles = StyleSheet.create({
   menuGlyph: { fontSize: 24, lineHeight: 28 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two },
   badges: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two },
+  cardBlock: { gap: Spacing.one },
 });

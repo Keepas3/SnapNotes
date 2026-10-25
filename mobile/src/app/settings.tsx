@@ -13,7 +13,8 @@ import { confirm } from '@/lib/confirm';
 import { plural } from '@/lib/format';
 import { useSettings } from '@/lib/settings';
 import { CHOICE_COUNTS } from '@/lib/choices';
-import { useChoicePrefs, useNewPerDay, usePendingReviews, useSetChoicePrefs, useSetNewPerDay } from '@/study/hooks';
+import { RETENTION_CHOICES } from '@/study/scheduler';
+import { useChoicePrefs, useNewPerDay, usePendingReviews, useSchedulingPrefs, useSetChoicePrefs, useSetNewPerDay, useSetSchedulingPrefs } from '@/study/hooks';
 import { useSync } from '@/sync/provider';
 
 const URL_HINT = Platform.select({ web: 'http://localhost:8000', android: 'http://10.0.2.2:8000', default: 'http://192.168.1.20:8000' });
@@ -41,6 +42,8 @@ function SettingsForm() {
   const setNewPerDay = useSetNewPerDay();
   const choicePrefs = useChoicePrefs();
   const setChoicePrefs = useSetChoicePrefs();
+  const scheduling = useSchedulingPrefs();
+  const setScheduling = useSetSchedulingPrefs();
   const pending = usePendingReviews();
   const [urlInput, setUrlInput] = useState(baseUrl);
   const [tokenInput, setTokenInput] = useState(token);
@@ -168,6 +171,25 @@ function SettingsForm() {
           </View>
           <ThemedText type="caption" themeColor="textSecondary">
             How many cards you have never seen before are introduced each day. Reviews of cards you already know are not limited. The day starts at 4 a.m.
+          </ThemedText>
+
+          <ThemedText type="smallBold">How sure to be of remembering</ThemedText>
+          <View style={styles.choices} accessibilityRole="radiogroup" accessibilityLabel="How sure to be of remembering">
+            {RETENTION_CHOICES.map((r) => (
+              <Chip key={r} label={`${Math.round(r * 100)}%`} selected={scheduling.data?.retention === r} onPress={() => setScheduling.mutate({ retention: r })} />
+            ))}
+          </View>
+          <ThemedText type="caption" themeColor="textSecondary">
+            The chance you still remember a card on the day it comes back. 90% is the usual choice. Higher means cards return sooner and you review more; lower means fewer reviews and more forgetting. It applies from your next answers; cards already scheduled keep their dates until you answer them.
+          </ThemedText>
+          <View style={styles.switchRow}>
+            <ThemedText type="small" style={styles.flex}>
+              Spread out reviews
+            </ThemedText>
+            <Switch accessibilityLabel="Spread out reviews" value={scheduling.data?.spread ?? true} onValueChange={(on) => setScheduling.mutate({ spread: on })} />
+          </View>
+          <ThemedText type="caption" themeColor="textSecondary">
+            Nudges longer waits by a day or so, so cards you learned together do not all come back on the same day. Waits under a few days are never changed.
           </ThemedText>
 
           <ThemedText type="smallBold">Multiple choice: options per question</ThemedText>

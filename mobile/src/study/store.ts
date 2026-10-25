@@ -2,11 +2,15 @@ import type { CardType, FsrsState, Origin, SyncLogWire, SyncResponse } from '@/a
 import type { Db, SqlValue } from '@/db/types';
 
 import { studyDayEnd, studyDayStart } from './day';
-import { newState, reviewCard, type RatingValue } from './scheduler';
+import { DEFAULT_RETENTION, mostForgotten, newState, RETENTION_CHOICES, reviewCard, type RatingValue, type SchedulingOptions } from './scheduler';
 
 /** Cards still in (re)learning that are due within this long are offered early rather than ending the session. */
 export const LEARN_AHEAD_MS = 20 * 60_000;
 export const DEFAULT_NEW_PER_DAY = 10;
+/** A card missed this many times is a problem card (Anki's default "leech" threshold). */
+export const PROBLEM_LAPSES = 8;
+/** How many of the most overdue reviews are weighed when picking the one most worth showing next; far more than a day's study. */
+const REVIEW_CANDIDATES = 300;
 
 export interface LocalCard {
   id: string;
@@ -38,6 +42,10 @@ export interface DeckSummary extends StudyCounts {
   folder_id: string | null;
   updated_at: string;
   total: number;
+  /** cards the user has paused (left out of the counts above) */
+  paused: number;
+  /** cards, not paused, that have been missed PROBLEM_LAPSES times or more */
+  problem: number;
 }
 
 /** A folder with how much it holds; what is due in it comes from `counts` with the folder as the scope. */
@@ -47,6 +55,8 @@ export interface FolderSummary {
   updated_at: string;
   decks: number;
   total: number;
+  /** cards in it that are paused */
+  paused: number;
 }
 
 /** How multiple choice is set up on this phone (a preference of this phone, not synced). */
@@ -56,8 +66,18 @@ export interface ChoicePrefs {
   fillFromDeck: boolean;
 }
 
+/** What one card shows in a deck's list: how often it has been missed and whether it is paused. */
+export interface CardStat {
+  id: string;
+  lapses: number;
+  paused: boolean;
+}
+
 /** What to study or count: one deck (its id), every deck in a folder, or everything (null). */
 export type StudyScope = string | { folderId: string } | null;
+
+/** Leaves paused cards out of a query on `cards` (used unqualified, so not in the deck list's join). */
+const NOT_PAUSED = ' AND id NOT IN (SELECT card_id FROM card_flags WHERE paused = 1)';
 
 /** The SQL that narrows a query on `cards` to a scope, with its arguments. */
 function scopeClause(scope: StudyScope): { sql: string; args: SqlValue[] } {
@@ -173,6 +193,39 @@ export class LocalStore {
     if (change.fillFromDeck !== undefined) await this.setMeta('mc_fill', change.fillFromDeck ? '1' : '0');
   }
 
+  /** How cards are scheduled on this phone: the chance of remembering to aim for (default 90%) and whether to spread longer intervals (default on). */
+  async schedulingPrefs(): Promise<SchedulingOptions> {
+    const [retention, spread] = await Promise.all([this.getMeta('retention'), this.getMeta('spread')]);
+    const wanted = Number(retention);
+    return { retention: (RETENTION_CHOICES as readonly number[]).includes(wanted) ? wanted : DEFAULT_RETENTION, spread: spread !== '0' };
+  }
+
+  async setSchedulingPrefs(change: Partial<SchedulingOptions>): Promise<void> {
+    if (change.retention !== undefined && (RETENTION_CHOICES as readonly number[]).includes(change.retention)) await this.setMeta('retention', String(change.retention));
+    if (change.spread !== undefined) await this.setMeta('spread', change.spread ? '1' : '0');
+  }
+
+  // -- pausing cards ---------------------------------------------------------------------
+
+  /** Stop offering a card (it keeps its schedule and history). Kept on this phone only. */
+  async pauseCard(cardId: string): Promise<void> {
+    await this.db.run('INSERT INTO card_flags(card_id, paused) VALUES (?, 1) ON CONFLICT(card_id) DO UPDATE SET paused = 1', [cardId]);
+  }
+
+  async resumeCard(cardId: string): Promise<void> {
+    await this.db.run('DELETE FROM card_flags WHERE card_id = ?', [cardId]);
+  }
+
+  /** Missed-count and paused state of each card in a deck, for its card list. */
+  async cardStats(deckId: string): Promise<CardStat[]> {
+    const rows = await this.db.all<{ id: string; lapses: number | null; paused: number | null }>(
+      `SELECT c.id, json_extract(c.fsrs_json, '$.lapses') AS lapses, f.paused AS paused
+         FROM cards c LEFT JOIN card_flags f ON f.card_id = c.id WHERE c.deck_id = ?`,
+      [deckId],
+    );
+    return rows.map((r) => ({ id: r.id, lapses: r.lapses ?? 0, paused: r.paused === 1 }));
+  }
+
   /** The answers of a deck's other studyable cards, to borrow as wrong answers (questions and definitions only). */
   otherAnswers(deckId: string, exceptCardId: string): Promise<{ id: string; back: string }[]> {
     return this.db.all<{ id: string; back: string }>("SELECT id, back FROM cards WHERE deck_id = ? AND id != ? AND type IN ('basic', 'definition') AND back != ''", [deckId, exceptCardId]);
@@ -206,6 +259,7 @@ export class LocalStore {
       await tx.run('DELETE FROM cards');
       await tx.run('DELETE FROM decks');
       await tx.run('DELETE FROM folders');
+      await tx.run('DELETE FROM card_flags');
       await tx.run("DELETE FROM meta WHERE key IN ('cursor', 'epoch', 'server_url')");
     });
   }
@@ -223,15 +277,17 @@ export class LocalStore {
   async listDecks(now: Date, newPerDay: number): Promise<DeckSummary[]> {
     const end = studyDayEnd(now).toISOString();
     const remaining = await this.newRemaining(now, newPerDay);
-    const rows = await this.db.all<{ id: string; name: string; topic: string; folder_id: string | null; updated_at: string; total: number; new_total: number; learning: number; review: number }>(
+    const rows = await this.db.all<{ id: string; name: string; topic: string; folder_id: string | null; updated_at: string; total: number; paused: number; problem: number; new_total: number; learning: number; review: number }>(
       `SELECT d.id, d.name, d.topic, d.folder_id, d.updated_at,
               COUNT(c.id) AS total,
-              COALESCE(SUM(c.state = 0), 0) AS new_total,
-              COALESCE(SUM(c.state IN (1, 3) AND c.due <= ?), 0) AS learning,
-              COALESCE(SUM(c.state = 2 AND c.due <= ?), 0) AS review
-         FROM decks d LEFT JOIN cards c ON c.deck_id = d.id
+              COUNT(p.card_id) AS paused,
+              COALESCE(SUM(p.card_id IS NULL AND json_extract(c.fsrs_json, '$.lapses') >= ?), 0) AS problem,
+              COALESCE(SUM(p.card_id IS NULL AND c.state = 0), 0) AS new_total,
+              COALESCE(SUM(p.card_id IS NULL AND c.state IN (1, 3) AND c.due <= ?), 0) AS learning,
+              COALESCE(SUM(p.card_id IS NULL AND c.state = 2 AND c.due <= ?), 0) AS review
+         FROM decks d LEFT JOIN cards c ON c.deck_id = d.id LEFT JOIN card_flags p ON p.card_id = c.id AND p.paused = 1
         GROUP BY d.id ORDER BY d.updated_at DESC, d.name`,
-      [end, end],
+      [PROBLEM_LAPSES, end, end],
     );
     return rows.map(({ new_total, ...r }) => ({ ...r, new: Math.min(new_total, remaining) }));
   }
@@ -239,22 +295,32 @@ export class LocalStore {
   /** The folders on this phone, A to Z, with how many decks and cards each holds. */
   async listFolders(): Promise<FolderSummary[]> {
     return this.db.all<FolderSummary>(
-      `SELECT f.id, f.name, f.updated_at, COUNT(DISTINCT d.id) AS decks, COUNT(c.id) AS total
-         FROM folders f LEFT JOIN decks d ON d.folder_id = f.id LEFT JOIN cards c ON c.deck_id = d.id
+      `SELECT f.id, f.name, f.updated_at, COUNT(DISTINCT d.id) AS decks, COUNT(c.id) AS total, COUNT(p.card_id) AS paused
+         FROM folders f LEFT JOIN decks d ON d.folder_id = f.id LEFT JOIN cards c ON c.deck_id = d.id LEFT JOIN card_flags p ON p.card_id = c.id AND p.paused = 1
         GROUP BY f.id ORDER BY lower(f.name), f.id`,
     );
   }
 
-  /** Counts for one deck, a whole folder, or every deck (null). The daily new-card limit is shared, so a folder is counted as a whole, not summed. */
-  async counts(scope: StudyScope, now: Date, newPerDay: number): Promise<StudyCounts> {
+  /** The end of the study day, moved on by `aheadDays` when studying cards before they are due. */
+  private reviewHorizon(now: Date, aheadDays: number): string {
+    const end = studyDayEnd(now);
+    end.setDate(end.getDate() + Math.max(0, Math.round(aheadDays)));
+    return end.toISOString();
+  }
+
+  /**
+   * Counts for one deck, a whole folder, or every deck (null). The daily new-card limit is shared, so a folder is counted as a whole, not summed.
+   * Paused cards are left out. With `aheadDays`, reviews due that many days after today are counted as well.
+   */
+  async counts(scope: StudyScope, now: Date, newPerDay: number, aheadDays = 0): Promise<StudyCounts> {
     const end = studyDayEnd(now).toISOString();
     const { sql: scoped, args: extra } = scopeClause(scope);
     const row = await this.db.first<{ new_total: number; learning: number; review: number }>(
       `SELECT COALESCE(SUM(state = 0), 0) AS new_total,
               COALESCE(SUM(state IN (1, 3) AND due <= ?), 0) AS learning,
               COALESCE(SUM(state = 2 AND due <= ?), 0) AS review
-         FROM cards WHERE 1 = 1${scoped}`,
-      [end, end, ...extra],
+         FROM cards WHERE 1 = 1${scoped}${NOT_PAUSED}`,
+      [end, this.reviewHorizon(now, aheadDays), ...extra],
     );
     const remaining = await this.newRemaining(now, newPerDay);
     return { new: Math.min(row?.new_total ?? 0, remaining), learning: row?.learning ?? 0, review: row?.review ?? 0 };
@@ -263,31 +329,39 @@ export class LocalStore {
   /**
    * The next card to study: learning cards that are due, then reviews due today, then new cards (within the daily
    * budget), and finally learning cards due in the next few minutes. Null means the session is finished.
+   * Among reviews the one least likely to be remembered right now comes first. With `aheadDays`, once today's reviews
+   * are done the reviews due within that many days are offered too, the same way.
    */
-  async nextCard(scope: StudyScope, now: Date, newPerDay: number): Promise<{ card: LocalCard | null; counts: StudyCounts }> {
+  async nextCard(scope: StudyScope, now: Date, newPerDay: number, aheadDays = 0): Promise<{ card: LocalCard | null; counts: StudyCounts }> {
     const { sql: scoped, args: extra } = scopeClause(scope);
     const pick = async (where: string, args: SqlValue[], order: string) =>
-      this.db.first<CardRow>(`SELECT * FROM cards WHERE ${where}${scoped} ORDER BY ${order} LIMIT 1`, [...args, ...extra]);
+      this.db.first<CardRow>(`SELECT * FROM cards WHERE ${where}${scoped}${NOT_PAUSED} ORDER BY ${order} LIMIT 1`, [...args, ...extra]);
+    const forgotten = async (until: string): Promise<CardRow | null> => {
+      const rows = await this.db.all<CardRow>(`SELECT * FROM cards WHERE state = 2 AND due <= ?${scoped}${NOT_PAUSED} ORDER BY due LIMIT ${REVIEW_CANDIDATES}`, [until, ...extra]);
+      const best = mostForgotten(rows.map(rowToCard), now);
+      return best >= 0 ? rows[best] : null;
+    };
 
-    const counts = await this.counts(scope, now, newPerDay);
+    const counts = await this.counts(scope, now, newPerDay, aheadDays);
     let row = await pick('state IN (1, 3) AND due <= ?', [now.toISOString()], 'due');
-    row ??= await pick('state = 2 AND due <= ?', [studyDayEnd(now).toISOString()], 'due');
+    row ??= await forgotten(studyDayEnd(now).toISOString());
     if (!row && counts.new > 0) row = await pick('state = 0', [], 'created_at, id');
     row ??= await pick('state IN (1, 3) AND due <= ?', [new Date(now.getTime() + LEARN_AHEAD_MS).toISOString()], 'due');
+    if (!row && aheadDays > 0) row = await forgotten(this.reviewHorizon(now, aheadDays));
     return { card: row ? rowToCard(row) : null, counts };
   }
 
-  /** Every card in the scope, in the order they were made, for practice that ignores what is due. */
+  /** Every card in the scope that is not paused, in the order they were made, for practice that ignores what is due. */
   async allCardIds(scope: StudyScope): Promise<string[]> {
     const { sql: scoped, args } = scopeClause(scope);
-    const rows = await this.db.all<{ id: string }>(`SELECT id FROM cards WHERE 1 = 1${scoped} ORDER BY deck_id, created_at, id`, args);
+    const rows = await this.db.all<{ id: string }>(`SELECT id FROM cards WHERE 1 = 1${scoped}${NOT_PAUSED} ORDER BY deck_id, created_at, id`, args);
     return rows.map((r) => r.id);
   }
 
   /** Earliest time any already-studied card comes due again, for the "all caught up" screen. */
   async nextDue(scope: StudyScope): Promise<string | null> {
     const { sql: scoped, args } = scopeClause(scope);
-    const row = await this.db.first<{ due: string | null }>(`SELECT MIN(due) AS due FROM cards WHERE state != 0${scoped}`, args);
+    const row = await this.db.first<{ due: string | null }>(`SELECT MIN(due) AS due FROM cards WHERE state != 0${scoped}${NOT_PAUSED}`, args);
     return row?.due ?? null;
   }
 
@@ -300,11 +374,12 @@ export class LocalStore {
 
   /** Record an answer: update the card's schedule and append a review log, atomically. */
   async answer(cardId: string, rating: RatingValue, now: Date, elapsedMs: number): Promise<LocalCard> {
+    const options = await this.schedulingPrefs();
     return this.db.transaction(async (tx) => {
       const row = await tx.first<CardRow & { state: number }>('SELECT * FROM cards WHERE id = ?', [cardId]);
       if (!row) throw new Error('That card is no longer in this deck.');
       const before = JSON.parse(row.fsrs_json) as FsrsState;
-      const after = reviewCard(before, rating, now);
+      const after = reviewCard(before, rating, now, options, cardId);
 
       await tx.run('UPDATE cards SET state = ?, due = ?, last_review = ?, fsrs_json = ? WHERE id = ?', [
         after.state,
@@ -371,6 +446,7 @@ export class LocalStore {
         if (c.status !== 'approved') {
           // Only approved cards are studied; one that was un-approved (or rejected) disappears from the device.
           await tx.run('DELETE FROM cards WHERE id = ?', [c.id]);
+          await tx.run('DELETE FROM card_flags WHERE card_id = ?', [c.id]);
           continue;
         }
         const fresh = newState(new Date(c.created_at));
@@ -396,11 +472,13 @@ export class LocalStore {
       for (const gone of res.deleted) {
         if (gone.kind === 'card') {
           await tx.run('DELETE FROM cards WHERE id = ?', [gone.id]);
+          await tx.run('DELETE FROM card_flags WHERE card_id = ?', [gone.id]);
         } else if (gone.kind === 'folder') {
           // The folder goes, its decks stay: take them out of it (the server also sends each deck's own change).
           await tx.run('UPDATE decks SET folder_id = NULL WHERE folder_id = ?', [gone.id]);
           await tx.run('DELETE FROM folders WHERE id = ?', [gone.id]);
         } else {
+          await tx.run('DELETE FROM card_flags WHERE card_id IN (SELECT id FROM cards WHERE deck_id = ?)', [gone.id]);
           await tx.run('DELETE FROM cards WHERE deck_id = ?', [gone.id]);
           await tx.run('DELETE FROM decks WHERE id = ?', [gone.id]);
         }

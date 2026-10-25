@@ -13,7 +13,7 @@ import { plural } from '@/lib/format';
 import { parseStudyScope } from '@/lib/folders';
 import type { SwipeDirection } from '@/lib/swipe';
 import { describeInterval, previewDue, RATINGS, ratingForSwipe, type RatingValue } from '@/study/scheduler';
-import type { LocalCard, StudyCounts } from '@/study/store';
+import { PROBLEM_LAPSES, type LocalCard, type StudyCounts } from '@/study/store';
 import { useChoicePrefs, useInvalidateLocal, useSetChoicePrefs } from '@/study/hooks';
 import { useSync } from '@/sync/provider';
 
@@ -30,7 +30,11 @@ interface Step {
   left?: number;
   /** only in practice: how many cards the run started with */
   total?: number;
+  /** on the all-caught-up screen: how many cards studying ahead by 1, 3 or 7 days would offer (only the options with cards) */
+  aheadOptions?: { days: number; cards: number }[];
 }
+
+const AHEAD_DAYS = [1, 3, 7];
 
 const NO_COUNTS: StudyCounts = { new: 0, learning: 0, review: 0 };
 
@@ -40,7 +44,9 @@ const TONE: Record<RatingValue, ThemeColor> = { 1: 'danger', 2: 'warning', 3: 's
 const msSince = (startedAt: number) => Date.now() - startedAt;
 
 export default function StudyScreen() {
-  const { deckId, mode } = useLocalSearchParams<{ deckId: string; mode?: string }>();
+  const { deckId, mode, ahead: aheadParam } = useLocalSearchParams<{ deckId: string; mode?: string; ahead?: string }>();
+  // Studying ahead also offers the reviews due in the next few days, as real study.
+  const aheadDays = Math.max(0, Math.min(30, Math.round(Number(aheadParam)) || 0));
   // Kept as one value per address, so the effects that depend on it do not run again on every render.
   const scope = useMemo(() => parseStudyScope(deckId), [deckId]);
   // Practice goes through every card, due or not, and leaves the schedule alone.
@@ -53,6 +59,7 @@ export default function StudyScreen() {
   const [step, setStep] = useState<Step | null>(null);
   const [revealed, setRevealed] = useState(false);
   const [answered, setAnswered] = useState(0);
+  const [paused, setPaused] = useState(0); // cards paused this session; not answers, but a new card needs a fresh card view all the same
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [picked, setPicked] = useState<number | null>(null); // the option chosen in multiple choice, if any
@@ -67,8 +74,8 @@ export default function StudyScreen() {
   const options = useMemo<Option[] | null>(() => {
     const current = step?.card;
     if (!current || !prefs?.enabled) return null;
-    return buildOptions(current, step.others, { count: prefs.count, fillFromDeck: prefs.fillFromDeck, seed: String(answered) });
-  }, [step, prefs, answered]);
+    return buildOptions(current, step.others, { count: prefs.count, fillFromDeck: prefs.fillFromDeck, seed: String(answered + paused) });
+  }, [step, prefs, answered, paused]);
 
   /** Work out what to show next, from the on-device database only. */
   const fetchStep = useCallback(async (): Promise<Step> => {
@@ -83,16 +90,26 @@ export default function StudyScreen() {
       return { card: null, counts: NO_COUNTS, intervals: null, nextDue: null, others: [], left: 0, total: practiceTotal.current };
     }
     const now = new Date();
-    const { card, counts } = await store!.nextCard(scope, now, await store!.newPerDay());
+    const newPerDay = await store!.newPerDay();
+    const { card, counts } = await store!.nextCard(scope, now, newPerDay, aheadDays);
     if (card) {
-      const due = previewDue(card.fsrs, now);
+      const due = previewDue(card.fsrs, now, await store!.schedulingPrefs(), card.id);
       const intervals = { 1: describeInterval(now, due[1]), 2: describeInterval(now, due[2]), 3: describeInterval(now, due[3]), 4: describeInterval(now, due[4]) };
       return { card, counts, intervals, nextDue: null, others: await store!.otherAnswers(card.deck_id, card.id) };
     }
     const next = await store!.nextDue(scope);
     const nextDue = next ? (new Date(next) <= now ? 'now' : `in ${describeInterval(now, new Date(next))}`) : null;
-    return { card: null, counts, intervals: null, nextDue, others: [] };
-  }, [store, scope, practice]);
+    const aheadOptions: { days: number; cards: number }[] = [];
+    if (aheadDays === 0) {
+      let previous = counts.review;
+      for (const days of AHEAD_DAYS) {
+        const cards = (await store!.counts(scope, now, newPerDay, days)).review;
+        if (cards > previous) aheadOptions.push({ days, cards }); // only the choices that offer something more
+        previous = Math.max(previous, cards);
+      }
+    }
+    return { card: null, counts, intervals: null, nextDue, others: [], aheadOptions };
+  }, [store, scope, practice, aheadDays]);
 
   const show = useCallback((next: Step) => {
     shownAt.current = Date.now();
@@ -153,6 +170,24 @@ export default function StudyScreen() {
       show(await fetchStep());
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not show the next card.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** Stop offering this card until it is resumed from its deck. Its schedule is kept; the next card appears at once. */
+  async function pauseCurrent() {
+    if (!store || !step?.card || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await store.pauseCard(step.card.id);
+      if (practice) queue.current?.splice(0, 1);
+      setPaused((n) => n + 1);
+      invalidateLocal();
+      show(await fetchStep());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not pause that card.');
     } finally {
       setBusy(false);
     }
@@ -232,6 +267,25 @@ export default function StudyScreen() {
                   : 'Nothing is due right now.'
           }
         />
+        {step.aheadOptions && step.aheadOptions.length > 0 ? (
+          <View style={styles.aheadBlock}>
+            <ThemedText type="smallBold">Study ahead</ThemedText>
+            <ThemedText type="caption" themeColor="textSecondary">
+              Review cards before they are due. It counts as normal study, and a card you still remember well gains less from an early review.
+            </ThemedText>
+            <View style={styles.ratings}>
+              {step.aheadOptions.map((o) => (
+                <Button
+                  key={o.days}
+                  title={`${o.days} ${o.days === 1 ? 'day' : 'days'} (${o.cards})`}
+                  variant="secondary"
+                  style={styles.flex}
+                  onPress={() => router.replace({ pathname: '/study/[deckId]', params: { deckId: deckId ?? 'all', ahead: String(o.days) } })}
+                />
+              ))}
+            </View>
+          </View>
+        ) : null}
         <Button
           title="Go through all the cards anyway"
           variant="secondary"
@@ -304,7 +358,12 @@ export default function StudyScreen() {
           <Count label="Review" value={counts.review} active={kind === 'review'} />
         </View>
       )}
-      {!practice && total === 0 ? (
+      {aheadDays > 0 ? (
+        <ThemedText type="caption" themeColor="textSecondary">
+          Studying ahead: cards due in the next {aheadDays === 1 ? 'day' : `${aheadDays} days`} are included.
+        </ThemedText>
+      ) : null}
+      {!practice && total === 0 && aheadDays === 0 ? (
         <ThemedText type="caption" themeColor="textSecondary">
           Finishing the cards you are still learning.
         </ThemedText>
@@ -328,7 +387,7 @@ export default function StudyScreen() {
 
       {/* Keyed by the answer count too, so a card that comes straight back is drawn afresh instead of staying flung off-screen. */}
       <SwipeCard
-        key={`${card.id}-${answered}`}
+        key={`${card.id}-${answered}-${paused}`}
         swipeable={revealed && !busy}
         rightLabel="GOT IT"
         leftLabel="MISSED IT"
@@ -372,6 +431,21 @@ export default function StudyScreen() {
             ? 'Pick an answer, or tap I don’t know.'
             : 'Tap the card to see the answer.'}
       </ThemedText>
+
+      {revealed && card.fsrs.lapses >= PROBLEM_LAPSES ? (
+        <Banner
+          tone="warning"
+          message={`You have missed this card ${card.fsrs.lapses} times. Rewording it usually helps more than repeating it: open the deck to edit it, or pause it.`}
+          actionLabel="Pause card"
+          onAction={() => void pauseCurrent()}
+        />
+      ) : null}
+      {revealed ? (
+        <View style={styles.cardActions}>
+          {card.fsrs.lapses >= PROBLEM_LAPSES ? <Button title="Open deck" variant="ghost" onPress={() => router.push({ pathname: '/decks/[id]', params: { id: card.deck_id } })} /> : null}
+          {card.fsrs.lapses < PROBLEM_LAPSES ? <Button title="Pause this card" variant="ghost" disabled={busy} onPress={() => void pauseCurrent()} /> : null}
+        </View>
+      ) : null}
 
       {status.offline ? (
         <ThemedText type="caption" themeColor="textSecondary" style={styles.center}>
@@ -480,6 +554,8 @@ function SyncLine() {
 const styles = StyleSheet.create({
   counts: { flexDirection: 'row', justifyContent: 'space-around' },
   practiceHead: { gap: 2 },
+  aheadBlock: { gap: Spacing.two },
+  cardActions: { flexDirection: 'row', justifyContent: 'center', gap: Spacing.two },
   count: { alignItems: 'center', minWidth: 64 },
   underline: { textDecorationLine: 'underline' },
   face: { flexGrow: 1, justifyContent: 'center', paddingVertical: Spacing.three },
