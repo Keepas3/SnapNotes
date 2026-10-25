@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { LOCAL_KEY, useSync } from '@/sync/provider';
 
 import type { SchedulingOptions } from './scheduler';
-import type { CardStat, ChoicePrefs, DeckSummary, FolderSummary, StudyCounts, StudyScope, StudyStats } from './store';
+import type { CardStat, ChoicePrefs, DeckSummary, FolderSummary, OrderPrefs, RetentionPreview, StudyCounts, StudyScope, StudyStats } from './store';
 
 /** Reads from the on-device database. They work offline and refetch after every sync or study answer. */
 
@@ -161,6 +161,42 @@ export function useSetSchedulingPrefs() {
     onMutate: (change) => qc.setQueryData<SchedulingOptions>(key, (old) => ({ retention: 0.9, spread: true, ...old, ...change })), // apply at once; the save follows
     onSettled: () => qc.invalidateQueries({ queryKey: key }),
   });
+}
+
+/** How new cards are chosen on this phone: shuffled or in order, and whether they are mixed in among the reviews. */
+export function useOrderPrefs() {
+  const { store } = useSync();
+  return useQuery<OrderPrefs>({
+    queryKey: [...LOCAL_KEY, 'orderPrefs'],
+    queryFn: () => store!.orderPrefs(),
+    enabled: store !== null,
+  });
+}
+
+export function useSetOrderPrefs() {
+  const { store } = useSync();
+  const qc = useQueryClient();
+  const key = [...LOCAL_KEY, 'orderPrefs'];
+  return useMutation({
+    mutationFn: (change: Partial<OrderPrefs>) => store!.setOrderPrefs(change),
+    onMutate: (change) => qc.setQueryData<OrderPrefs>(key, (old) => ({ newOrder: 'shuffled', mixNew: true, ...old, ...change })), // apply at once; the save follows
+    onSettled: () => qc.invalidateQueries({ queryKey: LOCAL_KEY }),
+  });
+}
+
+/** What changing the retention of the cards already scheduled would do (nothing is changed), and doing it. */
+export function useRetentionChange() {
+  const { store } = useSync();
+  const qc = useQueryClient();
+  return {
+    preview: (retention: number): Promise<RetentionPreview> => store!.previewRetentionChange(retention, new Date()),
+    apply: async (retention: number): Promise<number> => {
+      const moved = await store!.applyRetentionChange(retention);
+      await qc.invalidateQueries({ queryKey: LOCAL_KEY });
+      return moved;
+    },
+    ready: store !== null,
+  };
 }
 
 /** Missed-count and paused state of each card in a deck (what the phone knows; empty until cards are synced). */

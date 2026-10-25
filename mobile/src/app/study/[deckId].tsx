@@ -53,6 +53,7 @@ export default function StudyScreen() {
   const practice = mode === 'all';
   const queue = useRef<string[] | null>(null); // practice: the cards still to go through; a missed card goes to the back
   const practiceTotal = useRef(0);
+  const practiceHistory = useRef<{ id: string; knew: boolean }[]>([]); // practice: the answers that can be taken back, most recent last
   const { store, storeError, status, sync } = useSync();
   const invalidateLocal = useInvalidateLocal();
 
@@ -60,6 +61,7 @@ export default function StudyScreen() {
   const [revealed, setRevealed] = useState(false);
   const [answered, setAnswered] = useState(0);
   const [paused, setPaused] = useState(0); // cards paused this session; not answers, but a new card needs a fresh card view all the same
+  const [undoable, setUndoable] = useState(0); // how many answers can be taken back
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [picked, setPicked] = useState<number | null>(null); // the option chosen in multiple choice, if any
@@ -78,7 +80,7 @@ export default function StudyScreen() {
   }, [step, prefs, answered, paused]);
 
   /** Work out what to show next, from the on-device database only. */
-  const fetchStep = useCallback(async (): Promise<Step> => {
+  const fetchStep = useCallback(async (restored?: LocalCard): Promise<Step> => {
     if (practice) {
       const cards = (queue.current ??= await store!.allCardIds(scope));
       if (practiceTotal.current === 0) practiceTotal.current = cards.length;
@@ -91,7 +93,8 @@ export default function StudyScreen() {
     }
     const now = new Date();
     const newPerDay = await store!.newPerDay();
-    const { card, counts } = await store!.nextCard(scope, now, newPerDay, aheadDays);
+    // After an undo the card that was just taken back is shown again, whatever would have come next.
+    const { card, counts } = restored ? { card: restored, counts: await store!.counts(scope, now, newPerDay, aheadDays) } : await store!.nextCard(scope, now, newPerDay, aheadDays);
     if (card) {
       const due = previewDue(card.fsrs, now, await store!.schedulingPrefs(), card.id);
       const intervals = { 1: describeInterval(now, due[1]), 2: describeInterval(now, due[2]), 3: describeInterval(now, due[3]), 4: describeInterval(now, due[4]) };
@@ -134,6 +137,20 @@ export default function StudyScreen() {
     void sync({ minIntervalMs: 30_000 });
   }, [sync]);
 
+  // While this screen is open the answers are held back from upload, so the last ones can be taken back. They are sent when it closes.
+  const syncRef = useRef(sync);
+  useEffect(() => {
+    syncRef.current = sync;
+  });
+  useEffect(() => {
+    if (!store || practice) return;
+    store.startUndoSession(new Date());
+    return () => {
+      store.endUndoSession();
+      void syncRef.current();
+    };
+  }, [store, practice]);
+
   // When the session is over, push the reviews right away rather than waiting for the next trigger.
   const finished = step !== null && step.card === null;
   useEffect(() => {
@@ -147,6 +164,7 @@ export default function StudyScreen() {
     try {
       await store.answer(step.card.id, rating, new Date(), msSince(shownAt.current));
       setAnswered((n) => n + 1);
+      setUndoable(await store.undoCount());
       invalidateLocal();
       show(await fetchStep());
       void sync({ minIntervalMs: 20_000 });
@@ -166,6 +184,8 @@ export default function StudyScreen() {
     try {
       const [head] = cards.splice(0, 1);
       if (!knew) cards.push(head);
+      practiceHistory.current.push({ id: head, knew });
+      setUndoable(practiceHistory.current.length);
       setAnswered((n) => n + 1);
       show(await fetchStep());
     } catch (e) {
@@ -193,9 +213,43 @@ export default function StudyScreen() {
     }
   }
 
+  /** Take back the most recent answer: the card gets its old schedule (or its place in the practice queue) and is shown again. */
+  async function undo() {
+    if (!store || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      if (practice) {
+        const last = practiceHistory.current.pop();
+        const cards = queue.current;
+        if (!last || !cards) return;
+        if (!last.knew) cards.pop(); // it was sent to the back
+        cards.unshift(last.id);
+        setUndoable(practiceHistory.current.length);
+        setAnswered((n) => Math.max(0, n - 1));
+        setPaused((n) => n + 1);
+        show(await fetchStep());
+        return;
+      }
+      const card = await store.undoLast();
+      setUndoable(await store.undoCount());
+      if (!card) return; // nothing to take back any more
+      setAnswered((n) => Math.max(0, n - 1));
+      setPaused((n) => n + 1); // draw the card afresh
+      invalidateLocal();
+      show(await fetchStep(card));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not undo that answer.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function practiceAgain() {
     queue.current = null;
     practiceTotal.current = 0;
+    practiceHistory.current = [];
+    setUndoable(0);
     setAnswered(0);
     show(await fetchStep());
   }
@@ -237,6 +291,7 @@ export default function StudyScreen() {
       <Screen
         footer={
           <View style={styles.footerStack}>
+            {undoable > 0 ? <Button title="Undo last answer" variant="ghost" disabled={busy} onPress={() => void undo()} /> : null}
             {(step.total ?? 0) > 0 ? <Button title="Go through them again" variant="secondary" onPress={() => void practiceAgain()} /> : null}
             <Button title="Done" onPress={goBack} />
           </View>
@@ -253,7 +308,13 @@ export default function StudyScreen() {
   if (!card) {
     const never = counts.new === 0 && nextDue === null && answered === 0;
     return (
-      <Screen footer={<Button title="Done" onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))} />}>
+      <Screen
+        footer={
+          <View style={styles.footerStack}>
+            {undoable > 0 ? <Button title="Undo last answer" variant="ghost" disabled={busy} onPress={() => void undo()} /> : null}
+            <Button title="Done" onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))} />
+          </View>
+        }>
         <Stack.Screen options={{ title: 'Study' }} />
         <EmptyState
           title={never ? 'Nothing to study yet' : 'All caught up'}
@@ -367,6 +428,12 @@ export default function StudyScreen() {
         <ThemedText type="caption" themeColor="textSecondary">
           Finishing the cards you are still learning.
         </ThemedText>
+      ) : null}
+
+      {undoable > 0 ? (
+        <View style={styles.cardActions}>
+          <Button title="Undo last answer" variant="ghost" disabled={busy} onPress={() => void undo()} />
+        </View>
       ) : null}
 
       <View style={styles.toggleRow}>

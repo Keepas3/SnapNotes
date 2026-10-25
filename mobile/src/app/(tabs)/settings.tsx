@@ -14,7 +14,7 @@ import { plural } from '@/lib/format';
 import { useSettings } from '@/lib/settings';
 import { CHOICE_COUNTS } from '@/lib/choices';
 import { RETENTION_CHOICES } from '@/study/scheduler';
-import { useChoicePrefs, useNewPerDay, usePendingReviews, useSchedulingPrefs, useSetChoicePrefs, useSetNewPerDay, useSetSchedulingPrefs } from '@/study/hooks';
+import { useChoicePrefs, useNewPerDay, useOrderPrefs, usePendingReviews, useRetentionChange, useSchedulingPrefs, useSetChoicePrefs, useSetNewPerDay, useSetOrderPrefs, useSetSchedulingPrefs } from '@/study/hooks';
 import { useSync } from '@/sync/provider';
 
 const URL_HINT = Platform.select({ web: 'http://localhost:8000', android: 'http://10.0.2.2:8000', default: 'http://192.168.1.20:8000' });
@@ -44,6 +44,11 @@ function SettingsForm() {
   const setChoicePrefs = useSetChoicePrefs();
   const scheduling = useSchedulingPrefs();
   const setScheduling = useSetSchedulingPrefs();
+  const orderPrefs = useOrderPrefs();
+  const setOrderPrefs = useSetOrderPrefs();
+  const retentionChange = useRetentionChange();
+  const [applying, setApplying] = useState(false);
+  const [applyNote, setApplyNote] = useState<{ tone: 'success' | 'danger'; text: string } | null>(null);
   const pending = usePendingReviews();
   const [urlInput, setUrlInput] = useState(baseUrl);
   const [tokenInput, setTokenInput] = useState(token);
@@ -87,6 +92,34 @@ function SettingsForm() {
       setMessage({ tone: 'danger', text });
     } finally {
       setBusy(false);
+    }
+  }
+
+  /** Give the cards already scheduled the dates the chosen retention implies, after showing what that would do. */
+  async function updateScheduledCards() {
+    const retention = scheduling.data?.retention ?? 0.9;
+    const percent = `${Math.round(retention * 100)}%`;
+    setApplyNote(null);
+    setApplying(true);
+    try {
+      const p = await retentionChange.preview(retention);
+      if (p.changed === 0) {
+        setApplyNote({ tone: 'success', text: p.review === 0 ? 'No cards have been studied enough to be rescheduled yet.' : `Nothing to change: the ${plural(p.review, 'card')} already scheduled follow ${percent}.` });
+        return;
+      }
+      const days = Math.abs(p.averageDays);
+      const lines = [
+        `${p.earlier > 0 ? `${plural(p.earlier, 'card')} will come back sooner` : ''}${p.earlier > 0 && p.later > 0 ? ', ' : ''}${p.later > 0 ? `${plural(p.later, 'card')} later` : ''} (${days} days ${p.averageDays < 0 ? 'sooner' : 'later'} on average).`,
+        p.dueToday > 0 ? `${plural(p.dueToday, 'card')} will be due today.` : '',
+        `${plural(p.review - p.changed, 'card')} stay as they are. Cards you are still learning and your answers are not touched. You can change it back the same way.`,
+      ].filter(Boolean);
+      if (!(await confirm(`Reschedule for ${percent}?`, lines.join(' '), 'Reschedule'))) return;
+      const moved = await retentionChange.apply(retention);
+      setApplyNote({ tone: 'success', text: `${plural(moved, 'card')} rescheduled for ${percent}.` });
+    } catch (e) {
+      setApplyNote({ tone: 'danger', text: e instanceof Error ? e.message : 'Could not reschedule the cards.' });
+    } finally {
+      setApplying(false);
     }
   }
 
@@ -180,6 +213,11 @@ function SettingsForm() {
           <ThemedText type="caption" themeColor="textSecondary">
             The chance you still remember a card on the day it comes back. 90% is the usual choice. Higher means cards return sooner and you review more; lower means fewer reviews and more forgetting. It applies from your next answers; cards already scheduled keep their dates until you answer them.
           </ThemedText>
+          <Button title={`Update scheduled cards to ${Math.round((scheduling.data?.retention ?? 0.9) * 100)}%`} variant="secondary" onPress={updateScheduledCards} loading={applying} />
+          <ThemedText type="caption" themeColor="textSecondary">
+            Cards you have already studied keep their dates unless you press this. It shows what would change first, and works from how well each card is known, so it can be changed back. It is done on this phone only: after a reinstall or a new phone, press it again.
+          </ThemedText>
+          {applyNote ? <Banner tone={applyNote.tone} message={applyNote.text} /> : null}
           <View style={styles.switchRow}>
             <ThemedText type="small" style={styles.flex}>
               Spread out reviews
@@ -188,6 +226,24 @@ function SettingsForm() {
           </View>
           <ThemedText type="caption" themeColor="textSecondary">
             Nudges longer waits by a day or so, so cards you learned together do not all come back on the same day. Waits under a few days are never changed.
+          </ThemedText>
+
+          <ThemedText type="smallBold">New card order</ThemedText>
+          <View style={styles.choices} accessibilityRole="radiogroup" accessibilityLabel="New card order">
+            <Chip label="Shuffled" selected={(orderPrefs.data?.newOrder ?? 'shuffled') === 'shuffled'} onPress={() => setOrderPrefs.mutate({ newOrder: 'shuffled' })} />
+            <Chip label="In order" selected={orderPrefs.data?.newOrder === 'order'} onPress={() => setOrderPrefs.mutate({ newOrder: 'order' })} />
+          </View>
+          <ThemedText type="caption" themeColor="textSecondary">
+            Shuffled mixes your decks and topics, so related cards are not back to back. It stays the same all day and changes tomorrow. In order follows the order the cards were made, deck by deck.
+          </ThemedText>
+          <View style={styles.switchRow}>
+            <ThemedText type="small" style={styles.flex}>
+              Mix new cards in with reviews
+            </ThemedText>
+            <Switch accessibilityLabel="Mix new cards in with reviews" value={orderPrefs.data?.mixNew ?? true} onValueChange={(on) => setOrderPrefs.mutate({ mixNew: on })} />
+          </View>
+          <ThemedText type="caption" themeColor="textSecondary">
+            On: new cards are spread through your reviews, in proportion to how many of each are left. Off: reviews first, then new cards. Cards you are still learning always come first.
           </ThemedText>
 
           <ThemedText type="smallBold">Multiple choice: options per question</ThemedText>

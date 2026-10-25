@@ -72,6 +72,10 @@ export const MIGRATIONS: string[] = [
     paused INTEGER NOT NULL DEFAULT 0
   );
   `,
+  // Version 5: the schedule a card had before each answer, so the answer can be undone. Older rows stay NULL and cannot be.
+  `
+  ALTER TABLE review_logs ADD COLUMN fsrs_before_json TEXT;
+  `,
 ];
 
 export async function migrate(db: Db): Promise<void> {

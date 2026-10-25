@@ -1,4 +1,6 @@
-import { createEmptyCard, fsrs, GenSeedStrategyWithCardId, generatorParameters, Rating, StrategyMode, type Card, type Grade, State } from 'ts-fsrs';
+import { createEmptyCard, fsrs, GenSeedStrategyWithCardId, generatorParameters, get_fuzz_range, Rating, StrategyMode, type Card, type Grade, State } from 'ts-fsrs';
+
+import { seededUnit } from '@/lib/order';
 
 import type { FsrsState } from '@/api/types';
 
@@ -105,6 +107,32 @@ export function previewDue(state: FsrsState, now: Date, options: SchedulingOptio
     3: preview[Rating.Good].card.due,
     4: preview[Rating.Easy].card.due,
   };
+}
+
+const MAX_INTERVAL_DAYS = 36500;
+const DAY_MS = 86_400_000;
+
+/**
+ * The same card scheduled for another level of retention: the wait after its last review becomes `stability x modifier` days, worked out from
+ * the strength the card already has, so nothing about its history changes. With spreading on, a card whose current wait is already inside
+ * the allowed spread around the new one is left alone (so applying the setting a card already follows moves nothing), and otherwise the new
+ * wait is picked inside that spread, seeded by the card. Returns null for a card this does not apply to (new or still being learned) or that
+ * would not move.
+ */
+export function rescheduleForRetention(state: FsrsState, options: SchedulingOptions, cardId: string): FsrsState | null {
+  if (state.state !== CardState.Review || !state.last_review) return null;
+  const modifier = algorithmFor({ retention: options.retention, spread: false }).calculate_interval_modifier(options.retention);
+  const target = Math.min(MAX_INTERVAL_DAYS, Math.max(1, Math.round(state.stability * modifier)));
+  let days = target;
+  if (options.spread && target >= 2.5) {
+    const { min_ivl, max_ivl } = get_fuzz_range(target, state.elapsed_days, MAX_INTERVAL_DAYS);
+    if (state.scheduled_days >= min_ivl && state.scheduled_days <= max_ivl) return null;
+    days = Math.floor(seededUnit(`${cardId}:${state.reps}`) * (max_ivl - min_ivl + 1) + min_ivl);
+  } else if (days === state.scheduled_days) {
+    return null;
+  }
+  const due = new Date(new Date(state.last_review).getTime() + days * DAY_MS).toISOString();
+  return due === state.due && days === state.scheduled_days ? null : { ...state, scheduled_days: days, due };
 }
 
 /** The chance, from 0 to 1, that a card that has been studied is still remembered at `now`. A card never studied counts as 0. */

@@ -41,7 +41,7 @@ export async function runSync(api: Pick<ApiClient, 'sync'>, store: LocalStore): 
     summary.cards += res.cards.length;
     summary.reset ||= res.reset;
 
-    const remaining = await store.pendingCount(); // more than one batch of reviews, or reviews re-opened by a reset
+    const remaining = await store.sendableCount(); // more than one batch of reviews, or reviews re-opened by a reset (answers held back for undo are not counted)
     if (!res.has_more && remaining === 0) return summary;
     // A reset legitimately moves the cursor backwards; any other page that claims "more" must move it forward.
     if (res.has_more && !res.reset && res.cursor <= cursor && remaining === 0) throw new Error('Sync stalled: the server did not advance the cursor.');

@@ -239,6 +239,7 @@ describe('LocalStore.answer', () => {
 describe('LocalStore.nextCard', () => {
   it('offers new cards oldest first and finishes when there are none left', async () => {
     const { store } = await makeStore();
+    await store.setOrderPrefs({ newOrder: 'order' }); // these checks are about which cards, not about the order
     await seedCards(store, ['c1', 'c2']);
     expect((await store.nextCard(null, NOW, 10)).card?.id).toBe('c1');
     await store.answer('c1', 4, NOW, 1); // easy: graduates, due in days
@@ -288,6 +289,7 @@ describe('LocalStore.nextCard', () => {
 
   it('stops offering new cards once the daily budget is used, and resets it the next study day', async () => {
     const { store } = await makeStore();
+    await store.setOrderPrefs({ newOrder: 'order' }); // these checks are about which cards, not about the order
     await seedCards(store, ['c1', 'c2', 'c3', 'c4']);
     for (const id of ['c1', 'c2']) await store.answer(id, 4, NOW, 1);
     expect(await store.counts(null, NOW, 2)).toMatchObject({ new: 0 });
@@ -309,6 +311,7 @@ describe('LocalStore.nextCard', () => {
 
   it('can be limited to one deck', async () => {
     const { store } = await makeStore();
+    await store.setOrderPrefs({ newOrder: 'order' }); // these checks are about which cards, not about the order
     await seedCards(store, ['a1'], deckA);
     await seedCards(store, ['b1'], { id: 'deck-b', name: 'Chem', topic: '', updated_at: '2026-03-01T08:00:00.000Z' }, '2026-03-01T07:00:00.000Z');
     expect((await store.nextCard('deck-a', NOW, 10)).card?.id).toBe('a1');

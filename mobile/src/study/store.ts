@@ -1,10 +1,11 @@
 import type { CardType, FsrsState, Origin, SyncLogWire, SyncResponse } from '@/api/types';
 import type { Db, SqlValue } from '@/db/types';
 
+import { seededFirst, seededUnit } from '@/lib/order';
 import { addDays, dayKey, MATURE_DAYS, MAX_ANSWER_SECONDS, type DayStat } from '@/lib/stats';
 
 import { ROLLOVER_HOUR, studyDayEnd, studyDayStart } from './day';
-import { DEFAULT_RETENTION, mostForgotten, newState, RETENTION_CHOICES, reviewCard, type RatingValue, type SchedulingOptions } from './scheduler';
+import { DEFAULT_RETENTION, mostForgotten, newState, RETENTION_CHOICES, rescheduleForRetention, reviewCard, type RatingValue, type SchedulingOptions } from './scheduler';
 
 /** Cards still in (re)learning that are due within this long are offered early rather than ending the session. */
 export const LEARN_AHEAD_MS = 20 * 60_000;
@@ -66,6 +67,28 @@ export interface ChoicePrefs {
   enabled: boolean;
   count: 4 | 5;
   fillFromDeck: boolean;
+}
+
+/** How new cards are chosen on this phone. */
+export interface OrderPrefs {
+  /** `shuffled`: a random-looking order that stays the same all day; `order`: the order the cards were made */
+  newOrder: 'shuffled' | 'order';
+  /** spread new cards through the reviews instead of showing them after all of them */
+  mixNew: boolean;
+}
+
+/** What changing the retention of the cards already scheduled would do. */
+export interface RetentionPreview {
+  /** cards in review, the ones this applies to */
+  review: number;
+  /** how many would get a new date */
+  changed: number;
+  earlier: number;
+  later: number;
+  /** cards that would be due today and are not now */
+  dueToday: number;
+  /** the average move of the cards that change, in days (negative: sooner) */
+  averageDays: number;
 }
 
 /** What one card shows in a deck's list: how often it has been missed and whether it is paused. */
@@ -218,6 +241,65 @@ export class LocalStore {
   async setSchedulingPrefs(change: Partial<SchedulingOptions>): Promise<void> {
     if (change.retention !== undefined && (RETENTION_CHOICES as readonly number[]).includes(change.retention)) await this.setMeta('retention', String(change.retention));
     if (change.spread !== undefined) await this.setMeta('spread', change.spread ? '1' : '0');
+  }
+
+  /** How new cards are chosen: shuffled (default) or in the order made, and whether they are mixed in among the reviews (default on). */
+  async orderPrefs(): Promise<OrderPrefs> {
+    const [order, mix] = await Promise.all([this.getMeta('new_order'), this.getMeta('new_mix')]);
+    return { newOrder: order === 'order' ? 'order' : 'shuffled', mixNew: mix !== '0' };
+  }
+
+  async setOrderPrefs(change: Partial<OrderPrefs>): Promise<void> {
+    if (change.newOrder !== undefined) await this.setMeta('new_order', change.newOrder === 'order' ? 'order' : 'shuffled');
+    if (change.mixNew !== undefined) await this.setMeta('new_mix', change.mixNew ? '1' : '0');
+  }
+
+  // -- changing the retention of cards already scheduled ---------------------------------
+
+  private async rescheduledCards(retention: number): Promise<{ id: string; before: FsrsState; after: FsrsState }[]> {
+    const { spread } = await this.schedulingPrefs();
+    const rows = await this.db.all<{ id: string; fsrs_json: string }>('SELECT id, fsrs_json FROM cards WHERE state = 2');
+    const changes: { id: string; before: FsrsState; after: FsrsState }[] = [];
+    for (const row of rows) {
+      const before = JSON.parse(row.fsrs_json) as FsrsState;
+      const after = rescheduleForRetention(before, { retention, spread }, row.id);
+      if (after) changes.push({ id: row.id, before, after });
+    }
+    return changes;
+  }
+
+  /** What `applyRetentionChange` would do, without doing it. */
+  async previewRetentionChange(retention: number, now: Date): Promise<RetentionPreview> {
+    const changes = await this.rescheduledCards(retention);
+    const review = (await this.db.first<{ n: number }>('SELECT COUNT(*) AS n FROM cards WHERE state = 2'))?.n ?? 0;
+    const end = studyDayEnd(now).getTime();
+    let moved = 0;
+    let earlier = 0;
+    let later = 0;
+    let dueToday = 0;
+    for (const { before, after } of changes) {
+      const delta = (new Date(after.due).getTime() - new Date(before.due).getTime()) / 86_400_000;
+      moved += delta;
+      if (delta < 0) earlier++;
+      else later++;
+      if (new Date(after.due).getTime() <= end && new Date(before.due).getTime() > end) dueToday++;
+    }
+    return { review, changed: changes.length, earlier, later, dueToday, averageDays: changes.length ? Math.round((moved / changes.length) * 10) / 10 : 0 };
+  }
+
+  /**
+   * Give every card in review the date that `retention` implies for the strength it already has (see `rescheduleForRetention`). Cards being
+   * learned, new cards and the answer history are left alone. Returns how many cards moved. Done on this phone only; the server hears about a
+   * schedule through answers.
+   */
+  async applyRetentionChange(retention: number): Promise<number> {
+    const changes = await this.rescheduledCards(retention);
+    await this.db.transaction(async (tx) => {
+      for (const { id, after } of changes) {
+        await tx.run('UPDATE cards SET due = ?, fsrs_json = ? WHERE id = ?', [after.due, JSON.stringify(after), id]);
+      }
+    });
+    return changes.length;
   }
 
   // -- pausing cards ---------------------------------------------------------------------
@@ -400,9 +482,26 @@ export class LocalStore {
     };
 
     const counts = await this.counts(scope, now, newPerDay, aheadDays);
+    const order = await this.orderPrefs();
+    const today = dayKey(now);
+    const pickNew = async (): Promise<CardRow | null> => {
+      if (order.newOrder === 'order') return pick('state = 0', [], 'created_at, id');
+      const ids = await this.db.all<{ id: string }>(`SELECT id FROM cards WHERE state = 0${scoped}${NOT_PAUSED}`, extra);
+      const chosen = seededFirst(ids.map((r) => r.id), today); // the same card all day, a different one tomorrow
+      return chosen ? this.db.first<CardRow>('SELECT * FROM cards WHERE id = ?', [chosen]) : null;
+    };
+
     let row = await pick('state IN (1, 3) AND due <= ?', [now.toISOString()], 'due');
-    row ??= await forgotten(studyDayEnd(now).toISOString());
-    if (!row && counts.new > 0) row = await pick('state = 0', [], 'created_at, id');
+    if (!row) {
+      // Reviews and new cards: mixed in proportion to how many of each are left, or reviews first.
+      const todays = aheadDays > 0 ? await this.counts(scope, now, newPerDay, 0) : counts;
+      if (order.mixNew && todays.new > 0 && todays.review > 0) {
+        const answers = (await this.db.first<{ n: number }>('SELECT COUNT(*) AS n FROM review_logs WHERE reviewed_at >= ?', [studyDayStart(now).toISOString()]))?.n ?? 0;
+        if (seededUnit(`${today}:${answers}`) < todays.new / (todays.new + todays.review)) row = await pickNew();
+      }
+      row ??= await forgotten(studyDayEnd(now).toISOString());
+      if (!row && counts.new > 0) row = await pickNew();
+    }
     row ??= await pick('state IN (1, 3) AND due <= ?', [new Date(now.getTime() + LEARN_AHEAD_MS).toISOString()], 'due');
     if (!row && aheadDays > 0) row = await forgotten(this.reviewHorizon(now, aheadDays));
     return { card: row ? rowToCard(row) : null, counts };
@@ -446,25 +545,82 @@ export class LocalStore {
         cardId,
       ]);
       await tx.run(
-        'INSERT INTO review_logs(id, card_id, rating, reviewed_at, elapsed_ms, state_before, state_after_json, synced) VALUES (?, ?, ?, ?, ?, ?, ?, 0)',
-        [this.newId(), cardId, rating, now.toISOString(), Math.max(0, Math.round(elapsedMs)), before.state, JSON.stringify(after)],
+        'INSERT INTO review_logs(id, card_id, rating, reviewed_at, elapsed_ms, state_before, state_after_json, fsrs_before_json, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)',
+        [this.newId(), cardId, rating, now.toISOString(), Math.max(0, Math.round(elapsedMs)), before.state, JSON.stringify(after), row.fsrs_json],
       );
       return rowToCard({ ...row, fsrs_json: JSON.stringify(after) });
     });
   }
 
+  // -- undoing answers -------------------------------------------------------------------
+
+  /** When the study screen was opened, while it is open; answers made since are held back from upload so they can still be undone. */
+  private holdFrom: string | null = null;
+
+  /** Start holding back the answers made from now on (the study screen is open). */
+  startUndoSession(now: Date): void {
+    this.holdFrom = now.toISOString();
+  }
+
+  /** Let the held answers go: they upload with the next sync, and can no longer be undone. */
+  endUndoSession(): void {
+    this.holdFrom = null;
+  }
+
+  /** How many answers made since the study screen was opened can still be taken back. */
+  async undoCount(): Promise<number> {
+    if (!this.holdFrom) return 0;
+    return (await this.db.first<{ n: number }>('SELECT COUNT(*) AS n FROM review_logs WHERE synced = 0 AND reviewed_at >= ? AND fsrs_before_json IS NOT NULL', [this.holdFrom]))?.n ?? 0;
+  }
+
+  /**
+   * Take back the most recent answer of this study session: the card gets the schedule it had before, and the answer is removed from the
+   * history (and so from today's new-card count). Returns the card, or null when there is nothing to undo or the card has changed since.
+   */
+  async undoLast(): Promise<LocalCard | null> {
+    const from = this.holdFrom;
+    if (!from) return null;
+    return this.db.transaction(async (tx) => {
+      const log = await tx.first<{ id: string; card_id: string; reviewed_at: string; fsrs_before_json: string }>(
+        `SELECT id, card_id, reviewed_at, fsrs_before_json FROM review_logs
+          WHERE synced = 0 AND reviewed_at >= ? AND fsrs_before_json IS NOT NULL ORDER BY reviewed_at DESC, rowid DESC LIMIT 1`,
+        [from],
+      );
+      if (!log) return null;
+      const row = await tx.first<CardRow & { last_review: string | null }>('SELECT * FROM cards WHERE id = ?', [log.card_id]);
+      if (!row) {
+        await tx.run('DELETE FROM review_logs WHERE id = ?', [log.id]); // the card was removed meanwhile; the answer means nothing now
+        return null;
+      }
+      if (row.last_review !== log.reviewed_at) return null; // answered again since: leave it
+      const before = JSON.parse(log.fsrs_before_json) as FsrsState;
+      await tx.run('UPDATE cards SET state = ?, due = ?, last_review = ?, fsrs_json = ? WHERE id = ?', [before.state, before.due, before.last_review, log.fsrs_before_json, log.card_id]);
+      await tx.run('DELETE FROM review_logs WHERE id = ?', [log.id]);
+      return rowToCard({ ...row, fsrs_json: log.fsrs_before_json });
+    });
+  }
+
   // -- sync ----------------------------------------------------------------------------
 
+  /** Reviews that can be uploaded now: the ones not held back for undo. */
   async pendingLogs(limit: number): Promise<SyncLogWire[]> {
+    const held = this.holdFrom ? ' AND reviewed_at < ?' : '';
     const rows = await this.db.all<{ id: string; card_id: string; rating: number; reviewed_at: string; elapsed_ms: number; state_before: number; state_after_json: string }>(
-      'SELECT id, card_id, rating, reviewed_at, elapsed_ms, state_before, state_after_json FROM review_logs WHERE synced = 0 ORDER BY reviewed_at, rowid LIMIT ?',
-      [limit],
+      `SELECT id, card_id, rating, reviewed_at, elapsed_ms, state_before, state_after_json FROM review_logs WHERE synced = 0${held} ORDER BY reviewed_at, rowid LIMIT ?`,
+      this.holdFrom ? [this.holdFrom, limit] : [limit],
     );
     return rows.map(({ state_after_json, ...r }) => ({ ...r, state_after: JSON.parse(state_after_json) as FsrsState }));
   }
 
+  /** Every review not yet uploaded, held ones included (for "waiting to sync" messages). */
   async pendingCount(): Promise<number> {
     return (await this.db.first<{ n: number }>('SELECT COUNT(*) AS n FROM review_logs WHERE synced = 0'))?.n ?? 0;
+  }
+
+  /** The reviews a sync could send right now: what is left after the held ones are set aside. */
+  async sendableCount(): Promise<number> {
+    if (!this.holdFrom) return this.pendingCount();
+    return (await this.db.first<{ n: number }>('SELECT COUNT(*) AS n FROM review_logs WHERE synced = 0 AND reviewed_at < ?', [this.holdFrom]))?.n ?? 0;
   }
 
   /**
