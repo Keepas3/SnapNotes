@@ -21,7 +21,10 @@ function ThemedApp() {
     <ThemeProvider value={scheme === 'dark' ? DarkTheme : DefaultTheme}>
       <SettingsProvider>
         <SyncProvider>
-          <Stack screenOptions={{ headerShadowVisible: false }} />
+          <Stack screenOptions={{ headerShadowVisible: false }}>
+            {/* Decks, Stats and Settings; everything else opens above them */}
+            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          </Stack>
         </SyncProvider>
         <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />
       </SettingsProvider>

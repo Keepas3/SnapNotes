@@ -1,4 +1,4 @@
-import { Stack, router } from 'expo-router';
+import { router } from 'expo-router';
 import { useState } from 'react';
 import { Platform, StyleSheet, Switch, TextInput, View } from 'react-native';
 
@@ -76,8 +76,7 @@ function SettingsForm() {
       }
       await save(url, tokenInput);
       setMessage({ tone: 'success', text: 'Connected.' });
-      if (router.canGoBack()) router.back();
-      else router.replace('/');
+      router.replace('/'); // Settings is a tab now: connected, so go to the decks
     } catch (e) {
       const text =
         e instanceof ApiError && e.status === 401
@@ -104,7 +103,6 @@ function SettingsForm() {
 
   return (
     <Screen>
-      <Stack.Screen options={{ title: 'Settings' }} />
       {!configured ? (
         <Card>
           <ThemedText type="heading">Connect to your SnapNotes server</ThemedText>

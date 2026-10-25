@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { Redirect, Stack, router, useFocusEffect } from 'expo-router';
+import { Redirect, router, useFocusEffect } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
 import { Pressable, RefreshControl, StyleSheet, View } from 'react-native';
 
@@ -34,16 +34,6 @@ export default function Home() {
   }
   if (!configured) return <Redirect href="/settings" />;
   return <HomeContent />;
-}
-
-function HeaderSettingsButton() {
-  return (
-    <Pressable accessibilityRole="button" accessibilityLabel="Settings" onPress={() => router.push('/settings')} hitSlop={12} style={styles.menuButton}>
-      <ThemedText type="linkPrimary" style={styles.menuGlyph}>
-        ☰
-      </ThemedText>
-    </Pressable>
-  );
 }
 
 function HomeContent() {
@@ -167,8 +157,6 @@ function HomeContent() {
       scrollEnabled={drag === null && !held}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
       footer={<Button title="New deck from notes" variant={waiting > 0 ? 'secondary' : 'primary'} onPress={() => router.push('/new')} />}>
-      <Stack.Screen options={{ title: 'SnapNotes', headerLeft: HeaderSettingsButton }} />
-
       {storeError ? <Banner message={`Offline study is unavailable: ${storeError}`} /> : null}
       {offline ? (
         <Banner tone="warning" message="You're offline. Studying still works; uploading notes and reviewing new cards need a connection." />
@@ -437,8 +425,6 @@ function DeckRow({ deck, drafts, onMove }: { deck: DeckSummary; drafts: number; 
 const DECK_GAP = Spacing.two;
 
 const styles = StyleSheet.create({
-  menuButton: { paddingHorizontal: Spacing.two, paddingVertical: Spacing.one },
-  menuGlyph: { fontSize: 24, lineHeight: 28 },
   indented: { marginLeft: Spacing.three },
   folderTitle: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
   unfiled: { paddingTop: Spacing.two, paddingHorizontal: Spacing.one, borderRadius: 8 },

@@ -6,7 +6,7 @@ Expo (SDK 58) + React Native + TypeScript, using Expo Router. It talks to the ba
 
 | Screen | File | What it does |
 |---|---|---|
-| Home | `src/app/index.tsx` | Decks (from the on-device database, so it works offline) with due / new counts and a Study button, "to review" badges, jobs in progress, and sync status |
+| Home | `src/app/(tabs)/index.tsx` | Decks (from the on-device database, so it works offline) with due / new counts and a Study button, "to review" badges, jobs in progress, and sync status |
 | Study | `src/app/study/[deckId].tsx` | Spaced-repetition session for one deck or all decks (`all`): show answer, then Again / Hard / Good / Easy with the next interval on each button. Runs entirely on the device |
 | New deck / add to a deck | `src/app/new.tsx` | Type or paste notes into a box (up to 20,000 characters, about 3,000 words; longer notes go in as a file), take a photo, choose photos from the camera roll, or choose PDF / Word / slides / text, in any mix; optional "skip source approval". Opened from a deck's settings it adds to that deck instead |
 | Job progress | `src/app/jobs/[id]/index.tsx` | Five-step progress, retry or discard, and moves you on when the job needs you or finishes |
@@ -14,7 +14,7 @@ Expo (SDK 58) + React Native + TypeScript, using Expo Router. It talks to the ba
 | Review cards | `src/app/jobs/[id]/review.tsx` | Swipe right to approve, left to discard, tap to flip, edit, undo; cards the checker set aside can be restored |
 | Deck | `src/app/decks/[id].tsx` | Approved / to review / set aside, edit or delete cards, and Study; **Settings** (rename, add notes, merge) |
 | Add a card | `src/app/cards/new.tsx` | Type your own question and answer (or a fill-in-the-blank) into a deck |
-| Settings | `src/app/settings.tsx` | Server address and access token (stored in the OS keychain) with a connection test, new cards per day, sync status, disconnect |
+| Settings | `src/app/(tabs)/settings.tsx` | Server address and access token (stored in the OS keychain) with a connection test, new cards per day, sync status, disconnect |
 
 Shared code: `src/api` (typed client, TanStack Query hooks), `src/lib` (settings, helpers for cloze cards, job steps, swipe thresholds, upload rules), `src/components` (UI kit, swipe card, card editor), `src/db` (on-device SQLite), `src/study` (FSRS scheduler and local store), `src/sync` (sync engine and provider).
 
@@ -60,6 +60,18 @@ If Expo Go sits on its "SnapNotes" screen with "New update available, downloadin
    - Web preview: `http://localhost:8000`, and start the backend with `SNAPNOTES_CORS_ORIGINS=http://localhost:8081`.
 
 Plain `http://` works in Expo Go and the web preview. Installed builds (Milestone 4) will need the backend behind HTTPS.
+
+## Navigation and Stats
+
+A bar at the bottom moves between **Decks** (Home), **Stats** and **Settings**. Everything else (a deck, studying, adding notes, reviewing) opens above the bar and covers it; going back returns to it. Until the server is set up the bar is hidden and only Settings shows. The three tabs live in `src/app/(tabs)/`.
+
+**Stats** is worked out on the phone from the answers it has saved, so it works offline and needs no server. Pick the last 7, 30 or 90 days:
+
+- **Retention:** of the answers given to cards you already knew (in review), the share that were not "Missed it". Practice mode and a card's first answers are not counted. Under 20 such answers the page says the number is too small to rely on.
+- **Cards learned** (studied at least once, of all cards, and how many are mature, waiting 21 days or more), **days studied** with the current and longest **streak**, **answers**, and **time studied** (each answer counts at most a minute, so a phone left open does not add time).
+- **Graphs:** answers per day, retention week by week (last 8 weeks), cards by stage (new, learning, young, mature), cards due in the next 14 days (overdue counted under Now; paused and new cards left out) and a 12-week study calendar. They are drawn with plain views, so there is no chart library.
+- A day starts at 4 a.m., as everywhere else in the app. "Days studied" counts days with at least one answer, not app opens.
+- **Limit:** the stats come from this phone's saved answers. The server keeps your reviews too but does not send them back, so a reinstalled app or a new phone starts with empty stats, and switching servers clears them.
 
 ## Managing decks
 

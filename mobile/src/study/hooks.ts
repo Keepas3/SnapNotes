@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { LOCAL_KEY, useSync } from '@/sync/provider';
 
 import type { SchedulingOptions } from './scheduler';
-import type { CardStat, ChoicePrefs, DeckSummary, FolderSummary, StudyCounts, StudyScope } from './store';
+import type { CardStat, ChoicePrefs, DeckSummary, FolderSummary, StudyCounts, StudyScope, StudyStats } from './store';
 
 /** Reads from the on-device database. They work offline and refetch after every sync or study answer. */
 
@@ -34,6 +34,17 @@ export function useStudyCounts(scope: StudyScope) {
   return useQuery<StudyCounts>({
     queryKey: [...LOCAL_KEY, 'counts', typeof scope === 'object' && scope !== null ? `folder:${scope.folderId}` : scope],
     queryFn: async () => store!.counts(scope, new Date(), await store!.newPerDay()),
+    enabled: store !== null,
+    staleTime: 0,
+  });
+}
+
+/** Your progress: answers per day, remembering, cards by stage and what is due soon. Read again after every answer or sync. */
+export function useStudyStats() {
+  const { store } = useSync();
+  return useQuery<StudyStats>({
+    queryKey: [...LOCAL_KEY, 'stats'],
+    queryFn: () => store!.stats(new Date()),
     enabled: store !== null,
     staleTime: 0,
   });

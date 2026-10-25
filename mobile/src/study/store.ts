@@ -1,7 +1,9 @@
 import type { CardType, FsrsState, Origin, SyncLogWire, SyncResponse } from '@/api/types';
 import type { Db, SqlValue } from '@/db/types';
 
-import { studyDayEnd, studyDayStart } from './day';
+import { addDays, dayKey, MATURE_DAYS, MAX_ANSWER_SECONDS, type DayStat } from '@/lib/stats';
+
+import { ROLLOVER_HOUR, studyDayEnd, studyDayStart } from './day';
 import { DEFAULT_RETENTION, mostForgotten, newState, RETENTION_CHOICES, reviewCard, type RatingValue, type SchedulingOptions } from './scheduler';
 
 /** Cards still in (re)learning that are due within this long are offered early rather than ending the session. */
@@ -72,6 +74,19 @@ export interface CardStat {
   lapses: number;
   paused: boolean;
 }
+
+/** How the cards are spread across the stages of learning, and what falls due soon. */
+export interface StudyStats {
+  /** today's study day, "YYYY-MM-DD" */
+  today: string;
+  /** every day with at least one answer, oldest first */
+  days: DayStat[];
+  cards: { total: number; new: number; learning: number; young: number; mature: number };
+  /** the next 14 study days starting today (overdue cards are counted on today); paused cards are left out */
+  forecast: { day: string; due: number }[];
+}
+
+export const FORECAST_DAYS = 14;
 
 /** What to study or count: one deck (its id), every deck in a folder, or everything (null). */
 export type StudyScope = string | { folderId: string } | null;
@@ -299,6 +314,48 @@ export class LocalStore {
          FROM folders f LEFT JOIN decks d ON d.folder_id = f.id LEFT JOIN cards c ON c.deck_id = d.id LEFT JOIN card_flags p ON p.card_id = c.id AND p.paused = 1
         GROUP BY f.id ORDER BY lower(f.name), f.id`,
     );
+  }
+
+  /**
+   * Everything the Stats page shows, from this phone's saved answers and cards. Answers are grouped by study day in SQL (local time, the
+   * day starting at 4 a.m.); only "review" answers measure remembering, because a card being learned for the first time has nothing to forget.
+   */
+  async stats(now: Date): Promise<StudyStats> {
+    const shift = `'localtime', '-${ROLLOVER_HOUR} hours'`;
+    const today = dayKey(now);
+    const days = await this.db.all<{ day: string; answers: number; review_answers: number; remembered: number; ms: number }>(
+      `SELECT date(reviewed_at, ${shift}) AS day,
+              COUNT(*) AS answers,
+              COALESCE(SUM(state_before = 2), 0) AS review_answers,
+              COALESCE(SUM(state_before = 2 AND rating >= 2), 0) AS remembered,
+              COALESCE(SUM(MIN(elapsed_ms, ${MAX_ANSWER_SECONDS * 1000})), 0) AS ms
+         FROM review_logs GROUP BY day ORDER BY day`,
+    );
+    const stage = await this.db.first<{ total: number; fresh: number; learning: number; young: number; mature: number }>(
+      `SELECT COUNT(*) AS total,
+              COALESCE(SUM(state = 0), 0) AS fresh,
+              COALESCE(SUM(state IN (1, 3)), 0) AS learning,
+              COALESCE(SUM(state = 2 AND COALESCE(json_extract(fsrs_json, '$.scheduled_days'), 0) < ${MATURE_DAYS}), 0) AS young,
+              COALESCE(SUM(state = 2 AND COALESCE(json_extract(fsrs_json, '$.scheduled_days'), 0) >= ${MATURE_DAYS}), 0) AS mature
+         FROM cards`,
+    );
+    const due = await this.db.all<{ day: string; n: number }>(
+      `SELECT date(due, ${shift}) AS day, COUNT(*) AS n FROM cards WHERE state != 0${NOT_PAUSED} GROUP BY day`,
+    );
+    const byDay = new Map<string, number>();
+    for (const row of due) {
+      const day = row.day < today ? today : row.day; // overdue is due now
+      byDay.set(day, (byDay.get(day) ?? 0) + row.n);
+    }
+    return {
+      today,
+      days: days.map((d) => ({ day: d.day, answers: d.answers, reviewAnswers: d.review_answers, remembered: d.remembered, seconds: Math.round(d.ms / 1000) })),
+      cards: { total: stage?.total ?? 0, new: stage?.fresh ?? 0, learning: stage?.learning ?? 0, young: stage?.young ?? 0, mature: stage?.mature ?? 0 },
+      forecast: Array.from({ length: FORECAST_DAYS }, (_, i) => {
+        const day = addDays(today, i);
+        return { day, due: byDay.get(day) ?? 0 };
+      }),
+    };
   }
 
   /** The end of the study day, moved on by `aheadDays` when studying cards before they are due. */
