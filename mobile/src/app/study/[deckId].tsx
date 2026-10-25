@@ -26,7 +26,13 @@ interface Step {
   nextDue: string | null;
   /** the answers of the deck's other cards, which multiple choice can borrow as wrong answers */
   others: { id: string; back: string }[];
+  /** only in practice: how many cards are still in the queue (this one included) */
+  left?: number;
+  /** only in practice: how many cards the run started with */
+  total?: number;
 }
+
+const NO_COUNTS: StudyCounts = { new: 0, learning: 0, review: 0 };
 
 const TONE: Record<RatingValue, ThemeColor> = { 1: 'danger', 2: 'warning', 3: 'success', 4: 'tint' };
 
@@ -34,9 +40,13 @@ const TONE: Record<RatingValue, ThemeColor> = { 1: 'danger', 2: 'warning', 3: 's
 const msSince = (startedAt: number) => Date.now() - startedAt;
 
 export default function StudyScreen() {
-  const { deckId } = useLocalSearchParams<{ deckId: string }>();
+  const { deckId, mode } = useLocalSearchParams<{ deckId: string; mode?: string }>();
   // Kept as one value per address, so the effects that depend on it do not run again on every render.
   const scope = useMemo(() => parseStudyScope(deckId), [deckId]);
+  // Practice goes through every card, due or not, and leaves the schedule alone.
+  const practice = mode === 'all';
+  const queue = useRef<string[] | null>(null); // practice: the cards still to go through; a missed card goes to the back
+  const practiceTotal = useRef(0);
   const { store, storeError, status, sync } = useSync();
   const invalidateLocal = useInvalidateLocal();
 
@@ -62,6 +72,16 @@ export default function StudyScreen() {
 
   /** Work out what to show next, from the on-device database only. */
   const fetchStep = useCallback(async (): Promise<Step> => {
+    if (practice) {
+      const cards = (queue.current ??= await store!.allCardIds(scope));
+      if (practiceTotal.current === 0) practiceTotal.current = cards.length;
+      while (cards.length > 0) {
+        const next = await store!.getCard(cards[0]);
+        if (next) return { card: next, counts: NO_COUNTS, intervals: null, nextDue: null, others: await store!.otherAnswers(next.deck_id, next.id), left: cards.length, total: practiceTotal.current };
+        cards.shift(); // removed since the list was made
+      }
+      return { card: null, counts: NO_COUNTS, intervals: null, nextDue: null, others: [], left: 0, total: practiceTotal.current };
+    }
     const now = new Date();
     const { card, counts } = await store!.nextCard(scope, now, await store!.newPerDay());
     if (card) {
@@ -72,14 +92,14 @@ export default function StudyScreen() {
     const next = await store!.nextDue(scope);
     const nextDue = next ? (new Date(next) <= now ? 'now' : `in ${describeInterval(now, new Date(next))}`) : null;
     return { card: null, counts, intervals: null, nextDue, others: [] };
-  }, [store, scope]);
+  }, [store, scope, practice]);
 
   const show = useCallback((next: Step) => {
     shownAt.current = Date.now();
     setRevealed(false);
     setPicked(null);
     setStep(next);
-  }, []);
+  }, [setRevealed, setPicked, setStep]);
 
   useEffect(() => {
     if (!store) return;
@@ -120,6 +140,31 @@ export default function StudyScreen() {
     }
   }
 
+  /** Practice: nothing is saved. A card you knew leaves the queue; one you missed goes to the back of it. */
+  async function practiceAnswer(knew: boolean) {
+    const cards = queue.current;
+    if (!cards || !step?.card || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const [head] = cards.splice(0, 1);
+      if (!knew) cards.push(head);
+      setAnswered((n) => n + 1);
+      show(await fetchStep());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not show the next card.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function practiceAgain() {
+    queue.current = null;
+    practiceTotal.current = 0;
+    setAnswered(0);
+    show(await fetchStep());
+  }
+
   /** Choosing an option shows the answer. It does not rate the card: the student still says how well they knew it. */
   function pick(index: number) {
     if (!options || revealed || busy) return;
@@ -129,7 +174,8 @@ export default function StudyScreen() {
 
   /** A swipe is the same as tapping a button: right is "got it", left is "missed it". */
   function onSwiped(direction: SwipeDirection) {
-    void answer(ratingForSwipe(direction));
+    if (practice) void practiceAnswer(direction === 'right');
+    else void answer(ratingForSwipe(direction));
   }
 
   if (storeError) {
@@ -150,6 +196,25 @@ export default function StudyScreen() {
   const { card, counts, intervals, nextDue } = step;
   const total = counts.new + counts.learning + counts.review;
 
+  if (!card && practice) {
+    const goBack = () => (router.canGoBack() ? router.back() : router.replace('/'));
+    return (
+      <Screen
+        footer={
+          <View style={styles.footerStack}>
+            {(step.total ?? 0) > 0 ? <Button title="Go through them again" variant="secondary" onPress={() => void practiceAgain()} /> : null}
+            <Button title="Done" onPress={goBack} />
+          </View>
+        }>
+        <Stack.Screen options={{ title: 'Practice' }} />
+        <EmptyState
+          title={(step.total ?? 0) > 0 ? 'You went through every card' : 'No cards here yet'}
+          message={(step.total ?? 0) > 0 ? 'Your schedule was not changed.' : 'Approve some cards, then sync, and they will show up here.'}
+        />
+      </Screen>
+    );
+  }
+
   if (!card) {
     const never = counts.new === 0 && nextDue === null && answered === 0;
     return (
@@ -167,6 +232,11 @@ export default function StudyScreen() {
                   : 'Nothing is due right now.'
           }
         />
+        <Button
+          title="Go through all the cards anyway"
+          variant="secondary"
+          onPress={() => router.replace({ pathname: '/study/[deckId]', params: { deckId: deckId ?? 'all', mode: 'all' } })}
+        />
         <SyncLine />
       </Screen>
     );
@@ -179,7 +249,17 @@ export default function StudyScreen() {
   return (
     <Screen
       footer={
-        revealed && intervals ? (
+        revealed && practice ? (
+          <View style={styles.footerStack}>
+            <ThemedText type="caption" themeColor="textSecondary" style={styles.center}>
+              {pickedRight === true ? 'You picked the right answer. ' : pickedRight === false ? 'Not quite. ' : ''}Missed cards come back at the end.
+            </ThemedText>
+            <View style={styles.ratings}>
+              <Button title="Missed it" variant="secondary" disabled={busy} onPress={() => void practiceAnswer(false)} style={styles.flex} />
+              <Button title="Got it" disabled={busy} onPress={() => void practiceAnswer(true)} style={styles.flex} />
+            </View>
+          </View>
+        ) : revealed && intervals ? (
           <View style={styles.footerStack}>
             <ThemedText type="caption" themeColor="textSecondary" style={styles.center}>
               {suggested === 3
@@ -208,14 +288,23 @@ export default function StudyScreen() {
           <Button title="Show answer" onPress={() => setRevealed(true)} />
         )
       }>
-      <Stack.Screen options={{ title: 'Study' }} />
+      <Stack.Screen options={{ title: practice ? 'Practice' : 'Study' }} />
 
-      <View style={styles.counts} accessibilityLabel={`${counts.new} new, ${counts.learning} learning, ${counts.review} to review`}>
-        <Count label="New" value={counts.new} active={kind === 'new'} />
-        <Count label="Learning" value={counts.learning} active={kind === 'learning'} />
-        <Count label="Review" value={counts.review} active={kind === 'review'} />
-      </View>
-      {total === 0 ? (
+      {practice ? (
+        <View style={styles.practiceHead}>
+          <ThemedText type="smallBold">{`${step.left ?? 0} of ${step.total ?? 0} left`}</ThemedText>
+          <ThemedText type="caption" themeColor="textSecondary">
+            Practice goes through every card, due or not. It does not change when cards come back.
+          </ThemedText>
+        </View>
+      ) : (
+        <View style={styles.counts} accessibilityLabel={`${counts.new} new, ${counts.learning} learning, ${counts.review} to review`}>
+          <Count label="New" value={counts.new} active={kind === 'new'} />
+          <Count label="Learning" value={counts.learning} active={kind === 'learning'} />
+          <Count label="Review" value={counts.review} active={kind === 'review'} />
+        </View>
+      )}
+      {!practice && total === 0 ? (
         <ThemedText type="caption" themeColor="textSecondary">
           Finishing the cards you are still learning.
         </ThemedText>
@@ -390,6 +479,7 @@ function SyncLine() {
 
 const styles = StyleSheet.create({
   counts: { flexDirection: 'row', justifyContent: 'space-around' },
+  practiceHead: { gap: 2 },
   count: { alignItems: 'center', minWidth: 64 },
   underline: { textDecorationLine: 'underline' },
   face: { flexGrow: 1, justifyContent: 'center', paddingVertical: Spacing.three },

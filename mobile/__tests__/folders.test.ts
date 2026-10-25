@@ -224,6 +224,19 @@ describe('LocalStore folders', () => {
     expect(await store.nextDue({ folderId: 'f1' })).not.toBeNull();
     expect(await store.nextDue('d2')).toBeNull(); // the other deck was never studied
   });
+
+  it('lists every card in the scope for practice, whatever the daily limit or schedule says, and changes nothing', async () => {
+    const { store } = await makeStore();
+    const ids = ['a', 'b', 'c', 'd', 'e'];
+    await store.applySync(response({ folders: [folder('f1')], decks: [deckIn('d1', 'f1'), deckIn('d2', null)], cards: [...ids.map((id) => card(id, { deck_id: 'd1' })), card('z', { deck_id: 'd2' })] }), []);
+    await store.answer('a', 3, NOW, 1000); // studied, so not due again today
+    expect((await store.counts('d1', NOW, 1)).new).toBe(0); // the daily limit of 1 is used up...
+    expect(['a', undefined]).toContain((await store.nextCard('d1', NOW, 1)).card?.id); // ...so normal study offers no other new card
+    expect((await store.allCardIds('d1')).sort()).toEqual(ids); // practice still has all five
+    expect((await store.allCardIds({ folderId: 'f1' })).sort()).toEqual(ids);
+    expect((await store.allCardIds(null)).sort()).toEqual([...ids, 'z']);
+    expect(await store.pendingCount()).toBe(1); // only the one real answer was logged
+  });
 });
 
 describe('the phone database', () => {

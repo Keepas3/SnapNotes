@@ -277,6 +277,13 @@ export class LocalStore {
     return { card: row ? rowToCard(row) : null, counts };
   }
 
+  /** Every card in the scope, in the order they were made, for practice that ignores what is due. */
+  async allCardIds(scope: StudyScope): Promise<string[]> {
+    const { sql: scoped, args } = scopeClause(scope);
+    const rows = await this.db.all<{ id: string }>(`SELECT id FROM cards WHERE 1 = 1${scoped} ORDER BY deck_id, created_at, id`, args);
+    return rows.map((r) => r.id);
+  }
+
   /** Earliest time any already-studied card comes due again, for the "all caught up" screen. */
   async nextDue(scope: StudyScope): Promise<string | null> {
     const { sql: scoped, args } = scopeClause(scope);

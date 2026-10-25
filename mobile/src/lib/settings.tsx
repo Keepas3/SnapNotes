@@ -8,6 +8,13 @@ import * as storage from './storage';
 const KEY_URL = 'snapnotes.serverUrl';
 const KEY_TOKEN = 'snapnotes.token';
 
+/** The server and token a development run was started with, or null (always null in a release build). */
+export function devConnection(url: string | undefined, token: string | undefined, isDev: boolean = __DEV__) {
+  const base = normalizeBaseUrl(url ?? '');
+  const tok = (token ?? '').trim();
+  return isDev && base && tok ? { url: base, token: tok } : null;
+}
+
 interface SettingsContextValue {
   /** false until the stored values have been read, so screens don't flash the "set up" state */
   ready: boolean;
@@ -41,7 +48,13 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [url, tok] = await Promise.all([storage.getItem(KEY_URL), storage.getItem(KEY_TOKEN)]);
+      let [url, tok] = await Promise.all([storage.getItem(KEY_URL), storage.getItem(KEY_TOKEN)]);
+      const dev = devConnection(process.env.EXPO_PUBLIC_SNAPNOTES_DEV_URL, process.env.EXPO_PUBLIC_SNAPNOTES_DEV_TOKEN);
+      if (dev && (dev.url !== url || dev.token !== tok)) {
+        // start.ps1 hands a development build the server and token it just started, so they never go stale
+        [url, tok] = [dev.url, dev.token];
+        await Promise.all([storage.setItem(KEY_URL, dev.url), storage.setItem(KEY_TOKEN, dev.token)]).catch(() => {});
+      }
       if (cancelled) return;
       setBaseUrl(url ?? '');
       setToken(tok ?? '');

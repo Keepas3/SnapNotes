@@ -300,8 +300,13 @@ function FolderRow({
       <ThemedText type="small" themeColor="textSecondary">
         {folderSubtitle(folder.decks, folder.total)} · {parts.length ? parts.join(' · ') : folder.total > 0 ? 'nothing due' : 'empty'}
       </ThemedText>
-      {due + fresh > 0 ? (
-        <Button title={`Study folder (${due + fresh})`} variant="secondary" onPress={() => router.push({ pathname: '/study/[deckId]', params: { deckId: studyParam({ folderId: folder.id }) } })} />
+      {folder.total > 0 ? (
+        <View style={styles.studyButtons}>
+          {due + fresh > 0 ? (
+            <Button title={`Study folder (${due + fresh})`} variant="secondary" style={styles.flex} onPress={() => router.push({ pathname: '/study/[deckId]', params: { deckId: studyParam({ folderId: folder.id }) } })} />
+          ) : null}
+          <Button title={`All ${folder.total}`} variant="ghost" style={styles.flex} onPress={() => router.push({ pathname: '/study/[deckId]', params: { deckId: studyParam({ folderId: folder.id }), mode: 'all' } })} />
+        </View>
       ) : null}
     </Card>
   );
@@ -413,8 +418,13 @@ function DeckRow({ deck, drafts, onMove }: { deck: DeckSummary; drafts: number; 
         </View>
       </Pressable>
       {error ? <Banner message={error} /> : null}
-      {studyable > 0 ? (
-        <Button title={`Study (${studyable})`} variant="secondary" onPress={() => router.push({ pathname: '/study/[deckId]', params: { deckId: deck.id } })} />
+      {deck.total > 0 ? (
+        <View style={styles.studyButtons}>
+          {studyable > 0 ? (
+            <Button title={`Study (${studyable})`} variant="secondary" style={styles.flex} onPress={() => router.push({ pathname: '/study/[deckId]', params: { deckId: deck.id } })} />
+          ) : null}
+          <Button title={`All ${deck.total}`} variant="ghost" style={styles.flex} onPress={() => router.push({ pathname: '/study/[deckId]', params: { deckId: deck.id, mode: 'all' } })} />
+        </View>
       ) : null}
       <DeckSettingsSheet deck={settingsOpen ? { id: deck.id, name: deck.name, folderId: deck.folder_id } : null} onClose={() => setSettingsOpen(false)} onChanged={refreshPhone} />
     </Card>
@@ -434,6 +444,7 @@ const styles = StyleSheet.create({
   rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.two },
   deckHeader: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
   flex: { flex: 1 },
+  studyButtons: { flexDirection: 'row', gap: 8 },
   summary: { gap: Spacing.two },
   pressed: { opacity: 0.75 },
   syncRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.two },
