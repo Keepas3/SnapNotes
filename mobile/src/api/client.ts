@@ -166,7 +166,16 @@ export class ApiClient {
   async uploadDocument(files: UploadFile[], autoApprove: boolean, deckId?: string): Promise<{ document_id: string; job_id: string }> {
     const form = new FormData();
     for (const f of files) {
-      if (Platform.OS === 'web') {
+      if (f.text !== undefined) {
+        // Typed notes: the contents are already here, so there is no file to read.
+        const type = f.mimeType ?? 'text/plain';
+        if (Platform.OS === 'web') {
+          form.append('files', new Blob([f.text], { type }), f.name);
+        } else {
+          const bytes = new TextEncoder().encode(f.text);
+          form.append('files', { name: f.name, type, bytes: async () => bytes } as unknown as Blob);
+        }
+      } else if (Platform.OS === 'web') {
         const blob = await (await this.fetchImpl(f.uri)).blob();
         form.append('files', blob, f.name);
       } else {

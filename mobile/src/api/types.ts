@@ -215,7 +215,10 @@ export interface SyncResponse {
 
 /** A local file chosen for upload (from the document picker, camera or photo library). */
 export interface UploadFile {
+  /** where the file is on the device; empty for typed notes, which carry their own `text` */
   uri: string;
+  /** notes typed or pasted into the box: sent as the file's contents instead of reading `uri` */
+  text?: string;
   name: string;
   mimeType?: string;
   size?: number;

@@ -18,7 +18,7 @@ import { originBadge, originLabel, sourceName } from '@/lib/origin';
 import { cardWarnings } from '@/lib/warnings';
 import { currentStepIndex, isActive, stepsFor } from '@/lib/steps';
 import { decideSwipe, isTap } from '@/lib/swipe';
-import { extOf, formatBytes, photoName, validateSelection } from '@/lib/upload';
+import { extOf, formatBytes, MAX_TEXT_CHARS, MIN_TEXT_CHARS, photoName, textNoteFile, textNoteName, textProblem, validateSelection } from '@/lib/upload';
 
 describe('cloze', () => {
   it('turns markers into blanks for the question and plain text for the answer', () => {
@@ -307,5 +307,35 @@ describe('upload selection', () => {
     expect(extOf('noext')).toBe('');
     expect(formatBytes(2048)).toBe('2 KB');
     expect(formatBytes(3 * 1048576)).toBe('3.0 MB');
+  });
+});
+
+describe('typed notes', () => {
+  it('accepts a box that is empty (files may be chosen instead), long enough, and within the limit', () => {
+    expect(textProblem('')).toBeNull();
+    expect(textProblem('   \n ')).toBeNull();
+    expect(textProblem('x'.repeat(MIN_TEXT_CHARS))).toBeNull();
+    expect(textProblem('x'.repeat(MAX_TEXT_CHARS))).toBeNull();
+  });
+
+  it('says what is wrong when the notes are too short or over the limit', () => {
+    expect(textProblem('hi')).toMatch(/a little more/);
+    const over = textProblem('x'.repeat(MAX_TEXT_CHARS + 1234));
+    expect(over).toMatch(/1,234 characters over the 20,000 limit/);
+    expect(over).toMatch(/file/);
+  });
+
+  it('names the file after the first line and keeps the name safe', () => {
+    expect(textNoteName('# Binary search\n\nSplit the range in half.')).toBe('Binary-search.txt');
+    expect(textNoteName('\n\n  - Two pointers / sliding window: a*b?')).toBe('Two-pointers-sliding-window-a-b.txt');
+    expect(textNoteName('x'.repeat(100))).toBe(`${'x'.repeat(40)}.txt`);
+    expect(textNoteName('   \n')).toBe('Typed-notes.txt');
+  });
+
+  it('turns the text into a text file that passes the same checks as any other file', () => {
+    const file = textNoteFile('Café notes: ☕ binary search');
+    expect(file).toMatchObject({ uri: '', mimeType: 'text/plain', name: 'Café-notes-☕-binary-search.txt', text: 'Café notes: ☕ binary search' });
+    expect(file.size).toBe(new TextEncoder().encode('Café notes: ☕ binary search').length);
+    expect(validateSelection([file])).toBeNull();
   });
 });

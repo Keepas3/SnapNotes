@@ -8,7 +8,7 @@ Expo (SDK 58) + React Native + TypeScript, using Expo Router. It talks to the ba
 |---|---|---|
 | Home | `src/app/index.tsx` | Decks (from the on-device database, so it works offline) with due / new counts and a Study button, "to review" badges, jobs in progress, and sync status |
 | Study | `src/app/study/[deckId].tsx` | Spaced-repetition session for one deck or all decks (`all`): show answer, then Again / Hard / Good / Easy with the next interval on each button. Runs entirely on the device |
-| New deck / add to a deck | `src/app/new.tsx` | Take a photo, choose photos, or choose PDF / Word / slides / text; optional "skip source approval". Opened from a deck's settings it adds to that deck instead |
+| New deck / add to a deck | `src/app/new.tsx` | Type or paste notes into a box (up to 20,000 characters, about 3,000 words; longer notes go in as a file), take a photo, choose photos from the camera roll, or choose PDF / Word / slides / text, in any mix; optional "skip source approval". Opened from a deck's settings it adds to that deck instead |
 | Job progress | `src/app/jobs/[id]/index.tsx` | Five-step progress, retry or discard, and moves you on when the job needs you or finishes |
 | Approve sources | `src/app/jobs/[id]/sources.tsx` | Switch web sources on or off before cards are written; links open only as http(s) |
 | Review cards | `src/app/jobs/[id]/review.tsx` | Swipe right to approve, left to discard, tap to flip, edit, undo; cards the checker set aside can be restored |

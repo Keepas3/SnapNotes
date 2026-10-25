@@ -7,6 +7,7 @@
 import { convertFormDataAsync } from 'expo/src/winter/fetch/convertFormData';
 
 import { ApiClient } from '@/api/client';
+import { textNoteFile } from '@/lib/upload';
 
 // React Native's own FormData class (it ships no type declarations), and the patch Expo applies to it.
 const RNFormData = jest.requireActual('react-native/Libraries/Network/FormData').default;
@@ -52,5 +53,31 @@ describe('upload as Expo fetch will send it', () => {
     expect(wire).toContain('filename="abc.webp"\r\ncontent-type: image/webp\r\n\r\ncontents of file:///cache/ImagePicker/abc.webp\r\n');
     expect(wire).toContain('name="auto_approve"\r\n\r\nfalse\r\n');
     expect(wire.endsWith('--TESTBOUNDARY--\r\n')).toBe(true);
+  });
+});
+
+describe('typed notes as an upload', () => {
+  it('goes out as a text file with its own contents, without reading anything from the device', async () => {
+    let wire = '';
+    const impl = jest.fn(async (_url: string, init: RequestInit = {}) => {
+      const RealFormData = globalThis.FormData;
+      globalThis.FormData = installFormDataPatch(RNFormData) as unknown as typeof FormData;
+      try {
+        const { body } = await convertFormDataAsync(init.body as FormData, 'TESTBOUNDARY');
+        wire = new TextDecoder().decode(body);
+      } finally {
+        globalThis.FormData = RealFormData;
+      }
+      return { ok: true, status: 202, json: async () => ({ document_id: 'd', job_id: 'j' }) } as unknown as Response;
+    });
+    const RealFormData = globalThis.FormData;
+    globalThis.FormData = installFormDataPatch(RNFormData) as unknown as typeof FormData;
+    try {
+      await new ApiClient('http://srv', 't', impl as unknown as typeof fetch).uploadDocument([textNoteFile('# Binary search\nSplit the range in half.')], false);
+    } finally {
+      globalThis.FormData = RealFormData;
+    }
+    expect(wire).toContain('filename="Binary-search.txt"\r\ncontent-type: text/plain\r\n\r\n# Binary search\nSplit the range in half.\r\n');
+    expect(wire).not.toContain('contents of'); // the stand-in file reader was never used
   });
 });

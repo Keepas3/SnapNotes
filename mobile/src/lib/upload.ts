@@ -5,6 +5,14 @@ export const MAX_FILES = 20;
 export const MAX_TOTAL_BYTES = 30 * 1024 * 1024;
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
+/**
+ * Notes typed or pasted into the box. About 3,000 words: plenty for a lecture or a chapter's key points, and small enough that the AI
+ * reads it quickly and for little cost. Longer notes go in as a file, which has no such limit (only the 30 MB one for everything).
+ */
+export const MAX_TEXT_CHARS = 20_000;
+/** A line or two is not enough to make cards from. */
+export const MIN_TEXT_CHARS = 20;
+
 const IMAGE_EXT = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp']);
 export const ALLOWED_EXT = new Set(['pdf', 'docx', 'pptx', 'md', 'markdown', 'txt', ...IMAGE_EXT]);
 
@@ -24,6 +32,34 @@ export function photoName(asset: { fileName?: string | null; mimeType?: string |
   if (asset.fileName && ALLOWED_EXT.has(extOf(asset.fileName))) return asset.fileName;
   const ext = (asset.mimeType && MIME_EXT[asset.mimeType]) || (ALLOWED_EXT.has(extOf(asset.uri)) ? extOf(asset.uri) : 'jpg');
   return `photo-${now}-${index + 1}.${ext}`;
+}
+
+/** Why typed notes cannot be sent yet, or null when they can (or when the box is empty, which is fine if files were chosen). */
+export function textProblem(text: string): string | null {
+  const n = text.trim().length;
+  if (n === 0) return null;
+  if (n < MIN_TEXT_CHARS) return `Write a little more: at least ${MIN_TEXT_CHARS} characters, so there is something to make cards from.`;
+  if (text.length > MAX_TEXT_CHARS) return `The typed notes are ${(text.length - MAX_TEXT_CHARS).toLocaleString('en-US')} characters over the ${MAX_TEXT_CHARS.toLocaleString('en-US')} limit. Shorten them, or save them as a file and choose it instead.`;
+  return null;
+}
+
+/** A readable file name for typed notes, from their first line ("# Binary search" becomes "Binary-search.txt"). */
+export function textNoteName(text: string): string {
+  const first = text.split(/\r?\n/).find((line) => line.trim()) ?? '';
+  const words = first
+    .replace(/^[#>*\-\s]+/, '')
+    .replace(/[\/:*?"<>|\u0000-\u001f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 40)
+    .trim()
+    .replace(/\s/g, '-'); // no spaces: the upload percent-encodes them and the server shows the name as it arrives
+  return `${words || 'Typed-notes'}.txt`;
+}
+
+/** The typed notes as something that uploads like any other file. */
+export function textNoteFile(text: string): UploadFile {
+  return { uri: '', text, name: textNoteName(text), mimeType: 'text/plain', size: new TextEncoder().encode(text).length };
 }
 
 /** First problem with the chosen files, or null when they can be uploaded. */

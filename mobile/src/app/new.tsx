@@ -2,21 +2,25 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { Stack, router, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
-import { Image, Pressable, StyleSheet, Switch, View } from 'react-native';
+import { Image, Pressable, StyleSheet, Switch, TextInput, View } from 'react-native';
 
 import { useUpload } from '@/api/hooks';
 import type { UploadFile } from '@/api/types';
 import { ThemedText } from '@/components/themed-text';
 import { Banner, Button, Card, Screen, Section } from '@/components/ui';
 import { Spacing } from '@/constants/theme';
-import { formatBytes, isImage, MAX_FILES, photoName, validateSelection } from '@/lib/upload';
+import { useTheme } from '@/hooks/use-theme';
+import { formatBytes, isImage, MAX_FILES, MAX_TEXT_CHARS, photoName, textNoteFile, textProblem, validateSelection } from '@/lib/upload';
 
 export default function NewDeckScreen() {
   // Opened from a deck's settings with the deck to add to; opened from Home with nothing, it makes a new deck.
   const { deckId, deckName } = useLocalSearchParams<{ deckId?: string; deckName?: string }>();
   const adding = Boolean(deckId);
   const upload = useUpload();
+  const theme = useTheme();
   const [files, setFiles] = useState<UploadFile[]>([]);
+  const [text, setText] = useState(''); // notes typed or pasted into the box; sent as one more file
+
   const [skipApproval, setSkipApproval] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -54,12 +58,19 @@ export default function NewDeckScreen() {
     if (!res.canceled) add(fromAssets(res.assets));
   }
 
+  const typed = text.trim().length > 0;
+  const typedProblem = textProblem(text);
+  const overLimit = text.length > MAX_TEXT_CHARS; // shown at once; a note that is too short is only reported on upload, not while typing it
+  const items = typed ? files.length + 1 : files.length; // the typed notes count as one file
+
   async function submit() {
-    const problem = validateSelection(files);
+    if (typedProblem) return setError(typedProblem);
+    const all = typed ? [...files, textNoteFile(text.trim())] : files;
+    const problem = validateSelection(all);
     if (problem) return setError(problem);
     setError(null);
     try {
-      const { job_id } = await upload.mutateAsync({ files, autoApprove: skipApproval, deckId: deckId || undefined });
+      const { job_id } = await upload.mutateAsync({ files: all, autoApprove: skipApproval, deckId: deckId || undefined });
       router.replace({ pathname: '/jobs/[id]', params: { id: job_id } });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Upload failed.');
@@ -70,19 +81,38 @@ export default function NewDeckScreen() {
     <Screen
       footer={
         <Button
-          title={
-            files.length ? `Upload ${files.length} ${files.length === 1 ? 'file' : 'files'} and ${adding ? 'add cards' : 'generate'}` : 'Choose notes to start'
-          }
+          title={items ? `Upload ${items} ${items === 1 ? 'item' : 'items'} and ${adding ? 'add cards' : 'generate'}` : 'Add notes to start'}
           onPress={submit}
-          disabled={files.length === 0}
+          disabled={items === 0 || overLimit}
           loading={upload.isPending}
         />
       }>
       <Stack.Screen options={{ title: adding ? `Add to “${deckName || 'deck'}”` : 'New deck' }} />
 
-      <Section title="Add your notes">
-        <Button title="Take a photo of your notes" onPress={takePhoto} />
-        <Button title="Choose photos" variant="secondary" onPress={pickPhotos} />
+      <Section title="Type or paste your notes">
+        <TextInput
+          accessibilityLabel="Type or paste your notes"
+          style={[styles.textBox, { color: theme.text, backgroundColor: theme.backgroundElement, borderColor: overLimit ? theme.danger : theme.border }]}
+          value={text}
+          onChangeText={(t) => {
+            setText(t);
+            setError(null);
+          }}
+          placeholder="Paste or write your notes here"
+          placeholderTextColor={theme.textSecondary}
+          multiline
+          textAlignVertical="top"
+          autoCorrect
+        />
+        <ThemedText type="caption" themeColor={overLimit ? 'danger' : 'textSecondary'}>
+          {`${text.length.toLocaleString('en-US')} / ${MAX_TEXT_CHARS.toLocaleString('en-US')} characters. For longer notes, choose a file below.`}
+        </ThemedText>
+        {overLimit && typedProblem ? <Banner message={typedProblem} /> : null}
+      </Section>
+
+      <Section title="Or add photos and files">
+        <Button title="Take a photo of your notes" variant="secondary" onPress={takePhoto} />
+        <Button title="Choose photos from your camera roll" variant="secondary" onPress={pickPhotos} />
         <Button title="Choose files (PDF, Word, slides, text)" variant="secondary" onPress={pickDocuments} />
         <ThemedText type="caption" themeColor="textSecondary">
           {adding
@@ -139,4 +169,5 @@ const styles = StyleSheet.create({
   fileRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
   flex: { flex: 1 },
   thumb: { width: 48, height: 48, borderRadius: 8 },
+  textBox: { minHeight: 140, maxHeight: 320, borderRadius: 12, borderWidth: StyleSheet.hairlineWidth, padding: Spacing.three, fontSize: 16 },
 });
