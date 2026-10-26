@@ -5,7 +5,8 @@ import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { useDeck, useDeleteDocument, useEvidence, useJob, useJobCards, useRetryJob } from '@/api/hooks';
 import { SuspectClaims } from '@/components/suspect-claims';
 import { ThemedText } from '@/components/themed-text';
-import { Badge, Banner, Button, Card, Centered, Screen, Section, Spinner } from '@/components/ui';
+import { useLoadGate } from '@/components/load-gate';
+import { Badge, Banner, Button, Card, Screen, Section } from '@/components/ui';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { confirm } from '@/lib/confirm';
@@ -34,20 +35,9 @@ export default function JobScreen() {
     else if (job.data.status === 'completed') router.push({ pathname: '/jobs/[id]/review', params: { id } });
   }, [job.data, id]);
 
-  if (job.isPending) {
-    return (
-      <Centered>
-        <Spinner />
-      </Centered>
-    );
-  }
-  if (job.isError || !job.data) {
-    return (
-      <Screen>
-        <Banner message={job.error?.message ?? 'Could not load this job.'} actionLabel="Try again" onAction={() => job.refetch()} />
-      </Screen>
-    );
-  }
+  const gate = useLoadGate({ pending: job.isPending, error: job.error }, 'this upload', () => void job.refetch());
+  if (gate) return gate;
+  if (!job.data) return null;
 
   const j = job.data;
   const label = JOB_STATUS_LABEL[j.status];

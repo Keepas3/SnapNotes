@@ -7,7 +7,8 @@ import { ApiError } from '@/api/client';
 import type { EvidenceItem } from '@/api/types';
 import { SuspectClaims } from '@/components/suspect-claims';
 import { ThemedText } from '@/components/themed-text';
-import { Badge, Banner, Button, Card, Centered, EmptyState, Screen, Section, Spinner } from '@/components/ui';
+import { useLoadGate } from '@/components/load-gate';
+import { Badge, Banner, Button, Card, EmptyState, Screen, Section } from '@/components/ui';
 import { Spacing } from '@/constants/theme';
 import { domainOf, plural, safeHttpUrl, splitCorrection } from '@/lib/format';
 
@@ -17,20 +18,9 @@ export default function SourcesScreen() {
   const approve = useApproveSources(id);
   const [rejected, setRejected] = useState<ReadonlySet<number>>(new Set());
 
-  if (evidence.isPending) {
-    return (
-      <Centered>
-        <Spinner />
-      </Centered>
-    );
-  }
-  if (evidence.isError) {
-    return (
-      <Screen>
-        <Banner message={evidence.error.message} actionLabel="Try again" onAction={() => evidence.refetch()} />
-      </Screen>
-    );
-  }
+  const gate = useLoadGate({ pending: evidence.isPending, error: evidence.error }, 'the sources for this upload', () => void evidence.refetch());
+  if (gate) return gate;
+  if (!evidence.data) return null;
 
   const items = evidence.data.evidence;
   const understanding = evidence.data.understanding;

@@ -6,6 +6,7 @@ import { Image, Pressable, StyleSheet, Switch, TextInput, View } from 'react-nat
 
 import { useUpload } from '@/api/hooks';
 import type { UploadFile } from '@/api/types';
+import { OfflineNotice } from '@/components/load-gate';
 import { ThemedText } from '@/components/themed-text';
 import { Banner, Button, Card, Screen, Section } from '@/components/ui';
 import { Spacing } from '@/constants/theme';
@@ -88,6 +89,7 @@ export default function NewDeckScreen() {
         />
       }>
       <Stack.Screen options={{ title: adding ? `Add to “${deckName || 'deck'}”` : 'New deck' }} />
+      <OfflineNotice doing="Uploading notes" />
 
       <Section title="Type or paste your notes">
         <TextInput

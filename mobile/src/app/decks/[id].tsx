@@ -7,8 +7,9 @@ import { useDeck, useDeckCards, useDeleteDeck } from '@/api/hooks';
 import type { Card, CardStatus } from '@/api/types';
 import { CardEditor } from '@/components/card-editor';
 import { DeckSettingsSheet } from '@/components/deck-settings';
+import { useLoadGate } from '@/components/load-gate';
 import { ThemedText } from '@/components/themed-text';
-import { Badge, Banner, Button, Card as Panel, Centered, Chip, EmptyState, Screen, Section, Spinner } from '@/components/ui';
+import { Badge, Banner, Button, Card as Panel, Chip, EmptyState, Screen, Section, Spinner } from '@/components/ui';
 import { Spacing } from '@/constants/theme';
 import { clozeQuestion } from '@/lib/cloze';
 import { confirm } from '@/lib/confirm';
@@ -50,20 +51,14 @@ export default function DeckScreen() {
   const [exporting, setExporting] = useState<ExportFormat | null>(null);
   const [exportMessage, setExportMessage] = useState<{ tone: 'success' | 'danger'; text: string } | null>(null);
 
-  if (deck.isPending) {
-    return (
-      <Centered>
-        <Spinner />
-      </Centered>
-    );
-  }
-  if (deck.isError) {
-    return (
-      <Screen>
-        <Banner message={deck.error.message} actionLabel="Try again" onAction={() => deck.refetch()} />
-      </Screen>
-    );
-  }
+  const gate = useLoadGate({ pending: deck.isPending, error: deck.error }, "this deck's cards", () => {
+    // everything this screen read from the server, so none of it is left showing the earlier failure
+    void deck.refetch();
+    void cards.refetch();
+    void drafts.refetch();
+  });
+  if (gate) return gate;
+  if (!deck.data) return null;
 
   const d = deck.data;
   const statById = new Map((stats.data ?? []).map((s) => [s.id, s]));

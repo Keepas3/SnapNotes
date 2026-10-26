@@ -86,9 +86,11 @@ function SettingsForm() {
       const text =
         e instanceof ApiError && e.status === 401
           ? 'The server is reachable, but it rejected this access token.'
-          : e instanceof Error
-            ? e.message
-            : 'Could not connect.';
+          : e instanceof ApiError
+            ? (e.detail ?? e.message) // the address that was tried and why it failed
+            : e instanceof Error
+              ? e.message
+              : 'Could not connect.';
       setMessage({ tone: 'danger', text });
     } finally {
       setBusy(false);

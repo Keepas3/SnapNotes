@@ -1,4 +1,4 @@
-import { ApiClient, ApiError, insecureUrlProblem, isLocalHost, normalizeBaseUrl } from '@/api/client';
+import { ApiClient, ApiError, insecureUrlProblem, isLocalHost, normalizeBaseUrl, UNREACHABLE } from '@/api/client';
 
 // The phone reads a chosen file from its own storage; here a file "exists" unless its name says otherwise.
 jest.mock('@/lib/localFile', () => ({
@@ -135,7 +135,8 @@ describe('ApiClient', () => {
     const err = await new ApiClient('http://10.0.0.9:8000', 't', impl).listDecks().catch((e) => e);
     expect(err).toBeInstanceOf(ApiError);
     expect(err.isNetwork).toBe(true);
-    expect(err.message).toContain('http://10.0.0.9:8000');
+    expect(err.message).toBe(UNREACHABLE);
+    expect(err.detail).toContain('http://10.0.0.9:8000'); // the address stays available to the Settings connection test
   });
 
   it('refuses to fetch a deck without an id (the URL would hit the deck list)', () => {
@@ -232,12 +233,15 @@ describe('ApiClient', () => {
 
   it('keeps the underlying reason when a request cannot be made', async () => {
     const { impl } = fakeFetch([new Error('fetch failed: Network request failed')]);
+    // screens show the plain sentence; the address and the reason stay in `detail` for the Settings connection test
     await expect(new ApiClient('http://srv', 't', impl).getDeck('d1')).rejects.toMatchObject({
       status: 0,
-      message: 'Cannot reach the server at http://srv. (Network request failed)',
+      message: UNREACHABLE,
+      detail: 'Cannot reach the server at http://srv. (Network request failed)',
     });
     await expect(new ApiClient('http://srv', 't', fakeFetch([new Error('')]).impl).getDeck('d1')).rejects.toMatchObject({
-      message: 'Cannot reach the server at http://srv.',
+      message: UNREACHABLE,
+      detail: 'Cannot reach the server at http://srv.',
     });
   });
 });
@@ -293,5 +297,45 @@ describe('where the access token may be sent', () => {
     expect(calls).toHaveLength(0); // nothing left the phone
     await expect(new ApiClient('http://192.168.1.5:8000', 'tok', impl).listJobs()).resolves.toEqual([]);
     expect(calls).toHaveLength(1);
+  });
+});
+
+describe('a server that cannot be reached', () => {
+  it('says so in one plain sentence that tells the person what to do, and is a network error the screens can recognise', async () => {
+    const { impl } = fakeFetch([new Error('Failed to fetch')]);
+    const err = await new ApiClient('http://srv', 't', impl).listJobs().catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.isNetwork).toBe(true);
+    expect(err.message).toMatch(/needs a connection/);
+    expect(err.message).not.toMatch(/srv|fetch/i); // no address or browser jargon on a screen
+  });
+
+  it('gives up on a read that never answers after 12 seconds, but leaves an action its longer time', async () => {
+    jest.useFakeTimers();
+    try {
+      const hang = ((_url: string, init: RequestInit = {}) =>
+        new Promise<Response>((_, reject) => {
+          init.signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
+        })) as unknown as typeof fetch;
+      const read = new ApiClient('http://srv', 't', hang).listJobs().then(() => 'answered', (e: ApiError) => e.message);
+      await jest.advanceTimersByTimeAsync(11_000);
+      let readDone = false;
+      void read.then(() => (readDone = true));
+      await jest.advanceTimersByTimeAsync(0);
+      expect(readDone).toBe(false); // still waiting at 11 s
+      await jest.advanceTimersByTimeAsync(2_000);
+      await expect(read).resolves.toBe('The server took too long to respond.');
+
+      const action = new ApiClient('http://srv', 't', hang).createFolder('x').then(() => 'answered', (e: ApiError) => e.message);
+      await jest.advanceTimersByTimeAsync(13_000);
+      let actionDone = false;
+      void action.then(() => (actionDone = true));
+      await jest.advanceTimersByTimeAsync(0);
+      expect(actionDone).toBe(false); // an action still has its 20 seconds
+      await jest.advanceTimersByTimeAsync(8_000);
+      await expect(action).resolves.toBe('The server took too long to respond.');
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

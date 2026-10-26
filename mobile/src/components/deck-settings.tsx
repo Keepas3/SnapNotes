@@ -12,6 +12,7 @@ import { deckNameProblem, deleteDeckMessage, MAX_DECK_NAME, mergeCandidates, mer
 import { folderNameProblem } from '@/lib/folders';
 import { plural } from '@/lib/format';
 
+import { OfflineNotice } from './load-gate';
 import { ThemedText } from './themed-text';
 import { Banner, Button, Card, Spinner } from './ui';
 
@@ -107,6 +108,7 @@ function SheetBody({ deck, onClose, onChanged }: Props & { deck: SheetDeck }) {
         <ThemedText type="heading">Deck settings</ThemedText>
         <Button title="Close" variant="ghost" onPress={onClose} />
       </View>
+      <OfflineNotice doing="Changing a deck" />
 
       <ThemedText type="smallBold">Deck title</ThemedText>
       <TextInput

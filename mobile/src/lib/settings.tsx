@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 
-import { ApiClient, insecureUrlProblem, normalizeBaseUrl } from '@/api/client';
+import { ApiClient, ApiError, insecureUrlProblem, normalizeBaseUrl } from '@/api/client';
 
 import * as storage from './storage';
 
@@ -37,7 +37,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       new QueryClient({
         defaultOptions: {
           queries: {
-            retry: 1,
+            // One more try for a hiccup, none for a server that cannot be reached: the screen says so at once and has a Try again.
+            retry: (failures: number, error: Error) => failures < 1 && !(error instanceof ApiError && error.isNetwork),
             refetchOnWindowFocus: false,
             staleTime: 5_000,
           },

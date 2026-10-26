@@ -5,6 +5,7 @@ import { StyleSheet, TextInput, View } from 'react-native';
 
 import { useCreateCard } from '@/api/hooks';
 import type { NewCard } from '@/api/types';
+import { OfflineNotice } from '@/components/load-gate';
 import { ThemedText } from '@/components/themed-text';
 import { Banner, Button, Chip, Screen } from '@/components/ui';
 import { WrongAnswers } from '@/components/wrong-answers';
@@ -69,6 +70,7 @@ export default function NewCardScreen() {
   return (
     <Screen footer={<Button title="Add card" onPress={save} loading={create.isPending} />}>
       <Stack.Screen options={{ title: 'Add a card' }} />
+      <OfflineNotice doing="Adding a card" />
 
       <ThemedText type="small" themeColor="textSecondary">
         Added to “{where}”. It is approved straight away, so you can study it after the next sync (which starts as soon as you save).

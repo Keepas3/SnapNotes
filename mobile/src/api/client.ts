@@ -18,10 +18,15 @@ import type {
   UploadFile,
 } from './types';
 
+/** What a screen says when a request could not reach the server. The address and the technical reason are kept in `ApiError.detail`. */
+export const UNREACHABLE = "This needs a connection, and the server can't be reached right now.";
+
 export class ApiError extends Error {
   constructor(
     public readonly status: number,
     message: string,
+    /** The longer technical version of `message`, for the Settings connection test (the address tried and why it failed). */
+    public readonly detail?: string,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -34,6 +39,8 @@ export class ApiError extends Error {
 }
 
 const DEFAULT_TIMEOUT_MS = 20_000;
+/** Reading is quick; a read that has not answered in this long is treated as unreachable instead of leaving a spinner up. */
+const READ_TIMEOUT_MS = 12_000;
 const UPLOAD_TIMEOUT_MS = 180_000;
 
 type FetchLike = typeof fetch;
@@ -152,13 +159,13 @@ export class ApiClient {
     }
 
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? (method === 'GET' ? READ_TIMEOUT_MS : DEFAULT_TIMEOUT_MS));
     let res: Response;
     try {
       res = await this.fetchImpl(`${this.baseUrl}${path}${qs}`, { method, headers, body, signal: controller.signal });
     } catch (e) {
       const timedOut = e instanceof Error && e.name === 'AbortError';
-      throw new ApiError(0, timedOut ? 'The server took too long to respond.' : `Cannot reach the server at ${this.baseUrl}.${reasonOf(e)}`);
+      throw new ApiError(0, timedOut ? 'The server took too long to respond.' : UNREACHABLE, timedOut ? undefined : `Cannot reach the server at ${this.baseUrl}.${reasonOf(e)}`);
     } finally {
       clearTimeout(timer);
     }

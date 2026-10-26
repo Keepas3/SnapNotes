@@ -10,7 +10,8 @@ import { CardEditor } from '@/components/card-editor';
 import { CardBackdrop, SwipeCard, type SwipeCardHandle } from '@/components/swipe-card';
 import { SuspectClaims } from '@/components/suspect-claims';
 import { ThemedText } from '@/components/themed-text';
-import { Badge, Banner, Button, Card as Panel, Centered, EmptyState, Screen, Section, Spinner } from '@/components/ui';
+import { useLoadGate } from '@/components/load-gate';
+import { Badge, Banner, Button, Card as Panel, EmptyState, Screen, Section } from '@/components/ui';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { clozeQuestion } from '@/lib/cloze';
@@ -34,20 +35,9 @@ export default function ReviewScreen() {
   const job = useJob(id);
   const cards = useJobCards(id);
 
-  if (cards.isError) {
-    return (
-      <Screen>
-        <Banner message={cards.error.message} actionLabel="Try again" onAction={() => cards.refetch()} />
-      </Screen>
-    );
-  }
-  if (cards.isPending) {
-    return (
-      <Centered>
-        <Spinner />
-      </Centered>
-    );
-  }
+  const gate = useLoadGate({ pending: cards.isPending, error: cards.error }, 'these cards', () => void cards.refetch());
+  if (gate) return gate;
+  if (!cards.data) return null;
   const understanding = job.data?.understanding;
   return <ReviewSession cards={cards.data} deckId={job.data?.deck_id ?? null} suspectClaims={understanding?.suspect_claims} researchNote={understanding?.research_note} />;
 }

@@ -7,7 +7,8 @@ import { useDeck, useDeckCards, useSaveChoices, useSuggestChoices } from '@/api/
 import type { Card } from '@/api/types';
 import { CardEditor } from '@/components/card-editor';
 import { ThemedText } from '@/components/themed-text';
-import { Badge, Banner, Button, Card as Panel, Centered, Screen, Section, Spinner } from '@/components/ui';
+import { useLoadGate } from '@/components/load-gate';
+import { Badge, Banner, Button, Card as Panel, Screen, Section } from '@/components/ui';
 import { WrongAnswers } from '@/components/wrong-answers';
 import { Spacing } from '@/constants/theme';
 import { canUseChoices, cleanWrongAnswers, wrongAnswerProblem } from '@/lib/choices';
@@ -36,20 +37,16 @@ export default function ChoicesScreen() {
   const [message, setMessage] = useState<{ tone: 'success' | 'danger' | 'info'; text: string } | null>(null);
   const [editing, setEditing] = useState<Card | null>(null);
 
-  if (cards.isPending || deck.isPending) {
-    return (
-      <Centered>
-        <Spinner />
-      </Centered>
-    );
-  }
-  if (cards.isError || deck.isError) {
-    return (
-      <Screen>
-        <Banner message={(cards.error ?? deck.error)?.message ?? 'Could not load this deck.'} actionLabel="Try again" onAction={() => cards.refetch()} />
-      </Screen>
-    );
-  }
+  const gate = useLoadGate(
+    { pending: cards.isPending || deck.isPending, error: cards.error ?? deck.error },
+    "this deck's cards",
+    () => {
+      void cards.refetch();
+      void deck.refetch();
+    },
+  );
+  if (gate) return gate;
+  if (!cards.data || !deck.data) return null;
 
   const wrongWanted = (prefs.data?.count ?? 4) - 1;
   const usable = cards.data.filter(canUseChoices);

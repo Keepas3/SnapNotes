@@ -35,6 +35,8 @@ The phone keeps its own SQLite database: every deck, and the **approved** cards 
 - **Switching servers** clears the cached library (the cards belong to the old server); you are warned first if reviews have not been uploaded yet.
 - **A server that was restored or rebuilt** is noticed automatically: each response names the server's database, and if it is not the one this phone last synced with the server asks for a reset. The phone then replaces its cached decks and cards with a fresh download (so nothing the server no longer has stays studyable), keeps its review history, and uploads all of it again, which restores any progress the server lost. See `backend/DEPLOY.md` for the one command to run after restoring a backup.
 
+- **What needs a connection:** anything that changes the library or reads it from the server: uploading and adding notes, typing a card, editing a card (including its wrong answers), AI suggestions, renaming, merging, deleting and filing decks and folders, exports, and each deck's own screen (its card list). Studying, undo, practice, multiple choice from answers already saved or borrowed from the deck, Home, Stats and Settings do not. A screen that needs the server says so at once when the phone already knows it is offline (**This needs a connection**, with Try again), instead of spinning; the upload and settings pop-ups show an offline notice at the top. A read that gets no answer gives up after 12 seconds, and a server that cannot be reached is not retried.
+
 On the web preview the database is sql.js (SQLite compiled to JavaScript) persisted in `localStorage`; native builds use `expo-sqlite`. The SQL is the same, and the tests run it on Node's built-in SQLite.
 
 ## Run it

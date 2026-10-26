@@ -10,6 +10,7 @@ import { confirm } from '@/lib/confirm';
 import { plural } from '@/lib/format';
 import { folderNameProblem, MAX_FOLDER_NAME, studyParam } from '@/lib/folders';
 
+import { OfflineNotice } from './load-gate';
 import { ThemedText } from './themed-text';
 import { Banner, Button } from './ui';
 
@@ -85,6 +86,7 @@ function SheetBody({ target, onClose, onChanged }: Props & { target: FolderSheet
         <ThemedText type="heading">{editing ? 'Folder settings' : 'New folder'}</ThemedText>
         <Button title="Close" variant="ghost" onPress={onClose} />
       </View>
+      <OfflineNotice doing="Changing a folder" />
 
       <ThemedText type="smallBold">Folder name</ThemedText>
       <TextInput
