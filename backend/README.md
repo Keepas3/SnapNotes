@@ -66,7 +66,7 @@ $env:SNAPNOTES_TOKEN = "dev-token"
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --port 8000 --host 0.0.0.0
 ```
 
-`SNAPNOTES_DEMO_DELAY` (seconds per fake Claude call, default 1.2) controls how long the progress screen stays visible. Use `--host 0.0.0.0` to reach the server from a phone on your Wi-Fi.
+`SNAPNOTES_DEMO_DELAY` (seconds per fake Claude call, default 1.2) controls how long the progress screen stays visible. Use `--host 0.0.0.0` only when a real phone on your Wi-Fi has to reach the server: it then listens on your whole network, so everyone on it can try the token, which crosses the network unencrypted. Without it the server listens on this computer only (the Android emulator reaches it as `10.0.2.2`). `start.ps1` does this for you.
 
 For the Expo **web** preview only, also set `SNAPNOTES_CORS_ORIGINS=http://localhost:8081` so the browser may call the API. Native apps do not need CORS, and it is off by default.
 
@@ -181,7 +181,8 @@ The response carries `decks`, `cards` (with their `status`, so the device can dr
 
 | Setting | Default | Effect |
 |---|---|---|
-| `SNAPNOTES_MAX_JOBS_PER_HOUR` | 10 | `429` on upload beyond this |
+| `SNAPNOTES_MAX_JOBS_PER_HOUR` | 10 | `429` on upload beyond this; deleting a job does not give its allowance back |
+| `SNAPNOTES_UPLOAD_TTL_DAYS` | 14 | uploaded originals that no running job needs (a failed job, one waiting for approval) are deleted after this many days; 0 keeps them |
 | `SNAPNOTES_MAX_CHOICE_REQUESTS_PER_HOUR` | 30 | `429` on "suggest wrong answers" beyond this (each request asks the AI about up to 25 cards) |
 | `SNAPNOTES_MAX_JOB_COST_USD` | 2.0 | job stops between stages once its estimated spend passes this |
 | `SNAPNOTES_REQUESTS_PER_MINUTE` | 240 | per-client request limit (`429`) |

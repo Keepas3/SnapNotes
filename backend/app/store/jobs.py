@@ -55,6 +55,12 @@ class JobStore:
             )
         return job_id
 
+    def active_document_ids(self) -> set[str]:
+        """Documents with a job that is queued or running, whose original files must stay."""
+        with self.db.conn() as c:
+            rows = c.execute("SELECT document_id FROM jobs WHERE status IN ('queued', 'researching', 'approved', 'generating')").fetchall()
+        return {r[0] for r in rows}
+
     def count_since(self, iso_ts: str) -> int:
         with self.db.conn() as c:
             return c.execute("SELECT COUNT(*) FROM jobs WHERE created_at >= ?", (iso_ts,)).fetchone()[0]

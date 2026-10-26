@@ -44,6 +44,9 @@ if (-not $devUrl) { $devUrl = 'http://10.0.2.2:8000' }
 $env:EXPO_PUBLIC_SNAPNOTES_DEV_TOKEN = $saved
 $env:EXPO_PUBLIC_SNAPNOTES_DEV_URL = $devUrl
 Start-Process powershell -WorkingDirectory (Join-Path $root 'mobile') -ArgumentList '-NoExit', '-Command', 'npx expo start --clear'
+# The app window has its own copy now. Do not leave the token in this terminal, where a later "expo export" or release build run from it
+# would copy it into an app you might share (Expo puts every EXPO_PUBLIC_ variable it sees into the bundle).
+Remove-Item Env:EXPO_PUBLIC_SNAPNOTES_DEV_TOKEN, Env:EXPO_PUBLIC_SNAPNOTES_DEV_URL -ErrorAction SilentlyContinue
 
 Write-Host ''
 Write-Host 'Two windows opened: the server and the app. When the app window is ready, press a for the emulator.'

@@ -45,11 +45,31 @@ interface RequestOptions {
   timeoutMs?: number;
 }
 
-/** "192.168.1.5:8000" -> "http://192.168.1.5:8000"; strips trailing slashes. Returns null if unusable. */
+/**
+ * Whether an address is on your own machine or network (this phone's emulator host, a home or office network, a VPN address), where an
+ * unencrypted connection does not cross the internet: localhost, 127.x, 10.x, 172.16-31.x, 192.168.x, 169.254.x, 100.64-127.x (Tailscale and
+ * similar), names ending in .local, and bare names with no dot (a computer name). Anything else is on the internet.
+ */
+export function isLocalHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host === '::1') return true;
+  const ip = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (ip) {
+    const [a, b] = [Number(ip[1]), Number(ip[2])];
+    return a === 127 || a === 10 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31) || (a === 169 && b === 254) || (a === 100 && b >= 64 && b <= 127);
+  }
+  return !host.includes('.') && !host.includes(':'); // a bare computer name
+}
+
+/** "192.168.1.5:8000" -> "http://192.168.1.5:8000", "api.example.com" -> "https://api.example.com"; strips trailing slashes. Returns null if unusable. */
 export function normalizeBaseUrl(raw: string): string | null {
   let url = raw.trim();
   if (!url) return null;
-  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(url)) url = `http://${url}`;
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(url)) {
+    // With no scheme typed, an address on your own network is plain http (that is all a home server offers) and anything else is https.
+    const host = /^(\[[^\]]*\]|[^/:?#]*)/.exec(url)?.[1] ?? '';
+    url = `${host && isLocalHost(host) ? 'http' : 'https'}://${url}`;
+  }
   if (!/^https?:\/\//i.test(url)) return null;
   try {
     const parsed = new URL(url);
@@ -61,12 +81,21 @@ export function normalizeBaseUrl(raw: string): string | null {
 }
 
 /**
- * Installed builds (not the Expo Go / dev server) refuse plain-HTTP connections on both platforms, which shows up as a
- * confusing "network request failed". Say so up front instead.
+ * Why this address must not be used, or null. Your access token travels with every request, so it must not cross the internet unencrypted.
+ * Installed builds (not the Expo Go / dev server) refuse plain-HTTP connections on both platforms, which shows up as a confusing "network
+ * request failed", so say so up front. In development, http is allowed only to an address on your own machine or network.
  */
 export function insecureUrlProblem(url: string, isDev: boolean): string | null {
-  if (isDev || !/^http:\/\//i.test(url)) return null;
-  return 'Installed builds only connect over HTTPS. Use the https:// address of your deployed server (see backend/DEPLOY.md).';
+  if (!/^http:\/\//i.test(url)) return null;
+  if (!isDev) return 'Installed builds only connect over HTTPS. Use the https:// address of your deployed server (see backend/DEPLOY.md).';
+  let hostname = '';
+  try {
+    hostname = new URL(url).hostname;
+  } catch {
+    return 'That address is not valid.';
+  }
+  if (isLocalHost(hostname)) return null;
+  return `${hostname} is on the internet, so your access token would be sent unencrypted. Use the https:// address of your server.`;
 }
 
 /** FastAPI errors are `{detail: string}` or `{detail: [{msg, loc}]}`. */
@@ -105,6 +134,9 @@ export class ApiClient {
   ) {}
 
   private async request<T>(method: string, path: string, opts: RequestOptions = {}): Promise<T> {
+    // Checked on every request, not only when the address is typed in: an address saved earlier or handed over by a dev script gets no pass.
+    const insecure = insecureUrlProblem(this.baseUrl, __DEV__);
+    if (insecure) throw new ApiError(0, insecure);
     const params = Object.entries(opts.query ?? {}).filter(([, v]) => v !== undefined);
     const qs = params.length
       ? `?${params.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`).join('&')}`

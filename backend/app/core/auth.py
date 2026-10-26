@@ -25,6 +25,12 @@ def token_problem(cfg: Settings) -> str | None:
     )
 
 
+def bearer_ok(authorization: str, token: str) -> bool:
+    """True when an Authorization header carries exactly this bearer token. Constant-time comparison."""
+    scheme, _, supplied = authorization.partition(" ")
+    return scheme.lower() == "bearer" and hmac.compare_digest(supplied.encode(), token.encode())
+
+
 def require_auth(request: Request) -> None:
     """Single personal bearer token. Constant-time comparison; no token configured means refuse, not allow."""
     cfg = request.app.state.cfg
@@ -33,6 +39,5 @@ def require_auth(request: Request) -> None:
             return
         raise HTTPException(status_code=503, detail="Server token is not configured")
 
-    scheme, _, supplied = request.headers.get("authorization", "").partition(" ")
-    if scheme.lower() != "bearer" or not hmac.compare_digest(supplied.encode(), cfg.api_token.encode()):
+    if not bearer_ok(request.headers.get("authorization", ""), cfg.api_token):
         raise HTTPException(status_code=401, detail="Invalid or missing token", headers={"WWW-Authenticate": "Bearer"})

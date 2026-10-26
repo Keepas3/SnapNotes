@@ -1,18 +1,21 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 
-import { ApiClient, normalizeBaseUrl } from '@/api/client';
+import { ApiClient, insecureUrlProblem, normalizeBaseUrl } from '@/api/client';
 
 import * as storage from './storage';
 
 const KEY_URL = 'snapnotes.serverUrl';
 const KEY_TOKEN = 'snapnotes.token';
 
-/** The server and token a development run was started with, or null (always null in a release build). */
+/**
+ * The server and token a development run was started with, or null (always null in a release build, and for an address that would send
+ * the token unencrypted across the internet).
+ */
 export function devConnection(url: string | undefined, token: string | undefined, isDev: boolean = __DEV__) {
   const base = normalizeBaseUrl(url ?? '');
   const tok = (token ?? '').trim();
-  return isDev && base && tok ? { url: base, token: tok } : null;
+  return isDev && base && tok && !insecureUrlProblem(base, isDev) ? { url: base, token: tok } : null;
 }
 
 interface SettingsContextValue {
@@ -49,7 +52,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     (async () => {
       let [url, tok] = await Promise.all([storage.getItem(KEY_URL), storage.getItem(KEY_TOKEN)]);
-      const dev = devConnection(process.env.EXPO_PUBLIC_SNAPNOTES_DEV_URL, process.env.EXPO_PUBLIC_SNAPNOTES_DEV_TOKEN);
+      // The variables are named here only inside `__DEV__`, which a release build replaces with `false`: Expo copies every
+      // EXPO_PUBLIC_ variable it sees into the bundle, so a mention outside this test would put the token in an installed app.
+      const dev = __DEV__ ? devConnection(process.env.EXPO_PUBLIC_SNAPNOTES_DEV_URL, process.env.EXPO_PUBLIC_SNAPNOTES_DEV_TOKEN) : null;
       if (dev && (dev.url !== url || dev.token !== tok)) {
         // start.ps1 hands a development build the server and token it just started, so they never go stale
         [url, tok] = [dev.url, dev.token];

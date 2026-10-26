@@ -56,7 +56,7 @@ If Expo Go sits on its "SnapNotes" screen with "New update available, downloadin
 
 1. Start the backend (see `../backend/README.md`). For development without a Claude key use demo mode.
 2. In the app's Settings enter the server address and token.
-   - Physical phone: `http://<your computer's Wi-Fi address>:8000` (start the server with `--host 0.0.0.0`; allow it through the Windows firewall).
+   - Physical phone: `http://<your computer's Wi-Fi address>:8000` (start the server with `--host 0.0.0.0`; allow it through the Windows firewall). The app sends your token with every request, so it refuses to use plain `http://` for an address on the internet; `http://` is accepted only for your own machine or network (localhost, `10.x`, `172.16-31.x`, `192.168.x`, `100.64-127.x`, `.local` and bare computer names), and an installed app needs `https://`. An address typed without a scheme gets `https://` unless it is one of those.
    - Android emulator: `http://10.0.2.2:8000`.
    - Web preview: `http://localhost:8000`, and start the backend with `SNAPNOTES_CORS_ORIGINS=http://localhost:8081`.
 

@@ -1,4 +1,4 @@
-import { ApiClient, ApiError, normalizeBaseUrl } from '@/api/client';
+import { ApiClient, ApiError, insecureUrlProblem, isLocalHost, normalizeBaseUrl } from '@/api/client';
 
 // The phone reads a chosen file from its own storage; here a file "exists" unless its name says otherwise.
 jest.mock('@/lib/localFile', () => ({
@@ -239,5 +239,59 @@ describe('ApiClient', () => {
     await expect(new ApiClient('http://srv', 't', fakeFetch([new Error('')]).impl).getDeck('d1')).rejects.toMatchObject({
       message: 'Cannot reach the server at http://srv.',
     });
+  });
+});
+
+describe('where the access token may be sent', () => {
+  it.each([
+    ['localhost', true],
+    ['LOCALHOST', true],
+    ['app.localhost', true],
+    ['127.0.0.1', true],
+    ['10.0.2.2', true], // the Android emulator's name for the computer it runs on
+    ['192.168.1.20', true],
+    ['172.16.0.9', true],
+    ['172.31.255.1', true],
+    ['169.254.10.10', true],
+    ['100.101.102.103', true], // Tailscale and similar
+    ['[::1]', true],
+    ['my-laptop.local', true],
+    ['my-laptop', true], // a bare computer name
+    ['172.32.0.1', false],
+    ['172.15.0.1', false],
+    ['100.128.0.1', false],
+    ['8.8.8.8', false],
+    ['192.169.1.1', false],
+    ['api.example.com', false],
+    ['localhost.evil.com', false],
+    ['10.0.2.2.evil.com', false],
+    ['[2001:db8::1]', false],
+  ])('%s is %s', (host, local) => {
+    expect(isLocalHost(host)).toBe(local);
+  });
+
+  it('assumes https for an address typed without a scheme, unless it is on your own network', () => {
+    expect(normalizeBaseUrl('api.example.com')).toBe('https://api.example.com');
+    expect(normalizeBaseUrl('api.example.com:8443/')).toBe('https://api.example.com:8443');
+    expect(normalizeBaseUrl('10.0.2.2:8000')).toBe('http://10.0.2.2:8000');
+    expect(normalizeBaseUrl('my-laptop:8000')).toBe('http://my-laptop:8000');
+    expect(normalizeBaseUrl('[::1]:8000')).toBe('http://[::1]:8000');
+    expect(normalizeBaseUrl('http://api.example.com')).toBe('http://api.example.com'); // typed on purpose: kept, and refused below
+  });
+
+  it('refuses plain http to the internet in development, allows it on your network, and refuses it everywhere in an installed app', () => {
+    expect(insecureUrlProblem('https://api.example.com', false)).toBeNull();
+    expect(insecureUrlProblem('http://192.168.1.5:8000', true)).toBeNull();
+    expect(insecureUrlProblem('http://localhost:8000', true)).toBeNull();
+    expect(insecureUrlProblem('http://api.example.com', true)).toMatch(/sent unencrypted/);
+    expect(insecureUrlProblem('http://192.168.1.5:8000', false)).toMatch(/Installed builds only connect over HTTPS/);
+  });
+
+  it('refuses to send a request, whatever saved the address, when it would put the token on the internet unencrypted', async () => {
+    const { impl, calls } = fakeFetch([{ status: 200, body: [] }]);
+    await expect(new ApiClient('http://api.example.com', 'tok', impl).listJobs()).rejects.toMatchObject({ status: 0, message: expect.stringMatching(/unencrypted/) });
+    expect(calls).toHaveLength(0); // nothing left the phone
+    await expect(new ApiClient('http://192.168.1.5:8000', 'tok', impl).listJobs()).resolves.toEqual([]);
+    expect(calls).toHaveLength(1);
   });
 });

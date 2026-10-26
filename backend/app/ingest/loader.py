@@ -6,6 +6,7 @@ DOCX/PPTX/Markdown/plain text are parsed locally into delimited text.
 from __future__ import annotations
 
 import base64
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
@@ -21,6 +22,11 @@ IMAGE_TYPES = {
 }
 TEXT_SUFFIXES = {".txt", ".md", ".markdown"}
 MAX_IMAGE_BYTES = 5 * 1024 * 1024  # per-image API limit
+# A DOCX or PPTX is a zip, and a few hundred KB of zip can unpack to gigabytes of XML that the parser then holds in memory. Real documents
+# keep their text in a few MB of XML (their images are already compressed), so these limits never touch an honest file.
+MAX_XML_UNPACKED = 25 * 1024 * 1024
+MAX_UNPACKED = 200 * 1024 * 1024
+MAX_ZIP_MEMBERS = 20_000
 
 
 class UnsupportedFileError(ValueError):
@@ -45,8 +51,28 @@ def _wrap_notes(filename: str, body: str) -> dict:
     return {"type": "text", "text": f'<notes file="{filename}">\n{safe}\n</notes>'}
 
 
+def check_zip_limits(path: Path) -> None:
+    """Refuse an Office file that would unpack to far more than any real one, before anything parses it.
+
+    The sizes come from the zip's own directory; Python's zip reader stops at the declared size, so a file cannot claim a small size and
+    then unpack to a large one."""
+    try:
+        with zipfile.ZipFile(path) as z:
+            infos = z.infolist()
+    except zipfile.BadZipFile as exc:
+        raise UnsupportedFileError(f"{path.name} is not a valid Office file") from exc
+    if len(infos) > MAX_ZIP_MEMBERS:
+        raise UnsupportedFileError(f"{path.name} has too many parts to read safely")
+    xml = sum(i.file_size for i in infos if i.filename.lower().endswith((".xml", ".rels")))
+    total = sum(i.file_size for i in infos)
+    if xml > MAX_XML_UNPACKED or total > MAX_UNPACKED:
+        raise UnsupportedFileError(f"{path.name} unpacks to far more than a normal document ({total // (1024 * 1024)} MB), so it was not read")
+
+
 def _docx_text(path: Path) -> str:
     from docx import Document
+
+    check_zip_limits(path)
 
     doc = Document(str(path))
     lines: list[str] = []
@@ -69,6 +95,8 @@ def _docx_text(path: Path) -> str:
 def _pptx_text(path: Path) -> str:
     from pptx import Presentation
 
+    check_zip_limits(path)
+
     prs = Presentation(str(path))
     out: list[str] = []
     for i, slide in enumerate(prs.slides, 1):
@@ -86,6 +114,8 @@ def _pptx_text(path: Path) -> str:
 
 def _file_blocks(path: Path) -> list[dict]:
     suffix = path.suffix.lower()
+    if not path.exists():
+        raise UnsupportedFileError(f"{path.name} is no longer on the server (originals are kept for a limited time). Upload the notes again.")
     size = path.stat().st_size
     if size > settings.max_upload_bytes:
         raise UnsupportedFileError(f"{path.name} is {size / 1e6:.1f} MB; the limit is {settings.max_upload_bytes / 1e6:.0f} MB")

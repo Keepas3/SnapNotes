@@ -13,9 +13,11 @@ from typing import Callable
 from fastapi import APIRouter, Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.api import cards, decks, folders, jobs, sync, uploads
 from app.core.auth import require_auth, token_problem
+from app.core.authgate import AuthGateMiddleware
 from app.core.bodylimit import BodyLimitMiddleware
 from app.core.config import Settings, fact_check_problem, provider_problem
 from app.core.db import Database
@@ -24,6 +26,7 @@ from app.llm.base import LLM
 from app.llm.client import LLMClient, unpriced_models
 from app.llm.demo import DemoSDK
 from app.llm.factory import build_llm
+from app.pipeline.cleanup import sweep_old_uploads
 from app.pipeline.worker import JobWorker
 from app.store.jobs import JobStore
 from app.store.library import Library
@@ -62,6 +65,7 @@ def create_app(cfg: Settings | None = None, llm_factory: Callable[[], LLM] | Non
             )
         db.init()
         cfg.upload_dir.mkdir(parents=True, exist_ok=True)
+        sweep_old_uploads(cfg.upload_dir, store, cfg.upload_ttl_days)
         await worker.start()
         try:
             yield
@@ -83,8 +87,10 @@ def create_app(cfg: Settings | None = None, llm_factory: Callable[[], LLM] | Non
     app.state.worker = worker
     app.state.llm_factory = llm_factory  # also used by requests that ask the AI directly (suggested wrong answers)
     app.state.choice_limiter = SlidingWindowLimiter(cfg.max_choice_requests_per_hour, window_seconds=3600.0)
+    # Uploads started in the last hour, counted here as well as in the database: deleting a job removes its row, which would otherwise reset the cap.
+    app.state.upload_limiter = SlidingWindowLimiter(cfg.max_jobs_per_hour, window_seconds=3600.0)
+    app.state.last_upload_sweep = 0.0
 
-    @app.middleware("http")
     async def rate_limit(request: Request, call_next):
         if request.url.path != "/health":
             # Behind Fly.io the proxy puts the real client address in a header it controls (configurable; empty = ignore).
@@ -94,16 +100,23 @@ def create_app(cfg: Settings | None = None, llm_factory: Callable[[], LLM] | Non
                 return JSONResponse({"detail": "Too many requests"}, status_code=429, headers={"Retry-After": "60"})
         return await call_next(request)
 
-    # In front of everything that reads a body: an oversized request is refused before any of it is read.
-    # Uploads get the configured file limit plus a little room for the multipart framing around the files.
+    # The layers, innermost first (each add_middleware wraps everything added before it):
+    #   body limit      an oversized request is refused before any of it is read; uploads get the configured file limit plus
+    #                   a little room for the multipart framing around the files
+    #   auth gate       an anonymous request is answered 401 before any of its body is read
+    #   rate limit      outside the gate, so wrong-token guesses count against the client's allowance
+    #   CORS            outermost, so rejected (401/413/429) responses still carry its headers
     app.add_middleware(
         BodyLimitMiddleware,
         upload_path="/documents",
         upload_limit=cfg.max_upload_bytes + 1024 * 1024,
         default_limit=cfg.max_body_kb * 1024,
     )
+    public_paths = {"/health"} | ({"/docs", "/openapi.json", "/docs/oauth2-redirect"} if cfg.docs_enabled else set())
+    app.add_middleware(AuthGateMiddleware, token=cfg.api_token, public_paths=frozenset(public_paths))
+    app.add_middleware(BaseHTTPMiddleware, dispatch=rate_limit)
 
-    # Added last so it is the outermost layer: rejected (401/413/429) responses still carry CORS headers.
+    # Added last so it is the outermost layer.
     if cfg.cors_origins:
         app.add_middleware(
             CORSMiddleware,

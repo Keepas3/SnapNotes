@@ -151,6 +151,9 @@ class Settings:
     max_job_cost_usd: float = field(default_factory=lambda: float(_env("SNAPNOTES_MAX_JOB_COST_USD", "2.0")))
     requests_per_minute: int = field(default_factory=lambda: int(_env("SNAPNOTES_REQUESTS_PER_MINUTE", "240")))
 
+    # Uploaded originals that no job is using (a failed job, one waiting for approval) are deleted after this many days.
+    upload_ttl_days: int = field(default_factory=lambda: int(_env("SNAPNOTES_UPLOAD_TTL_DAYS", "14")))
+
     # Privacy: remove the uploaded originals once cards have been generated.
     delete_originals: bool = field(default_factory=lambda: _env("SNAPNOTES_DELETE_ORIGINALS", "1") == "1")
 

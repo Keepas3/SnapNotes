@@ -3,16 +3,18 @@ from __future__ import annotations
 
 import re
 import shutil
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile
 from starlette.concurrency import run_in_threadpool
 
 from app.api.deps import get_cfg, get_library, get_store, get_worker
 from app.api.models import UploadOut
 from app.core.config import Settings
 from app.ingest.loader import ALLOWED_SUFFIXES, IMAGE_TYPES, UnsupportedFileError, validate_file
+from app.pipeline.cleanup import sweep_old_uploads
 from app.pipeline.worker import JobWorker
 from app.store.jobs import JobStore
 from app.store.library import Library, new_id
@@ -39,6 +41,7 @@ def _kind(suffixes: set[str]) -> str:
 
 @router.post("/documents", response_model=UploadOut, status_code=202)
 async def upload_document(
+    request: Request,
     files: list[UploadFile],
     auto_approve: bool = Form(False),
     deck_id: str | None = Form(None, description="Add the new cards to this existing deck instead of making a new deck"),
@@ -55,10 +58,24 @@ async def upload_document(
     if deck_id is not None and await run_in_threadpool(library.get_deck, deck_id) is None:
         raise HTTPException(404, "Deck not found")
 
-    # Spend guard: bound how many jobs can be started per hour.
+    # Spend guard: bound how many jobs can be started per hour. Counted from the database and from a memory of recent uploads, because
+    # deleting a job removes its row and would otherwise let the same hour's allowance be used again.
     since = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
-    if await run_in_threadpool(store.count_since, since) >= cfg.max_jobs_per_hour:
+    limiter = request.app.state.upload_limiter
+    if await run_in_threadpool(store.count_since, since) >= cfg.max_jobs_per_hour or not limiter.would_allow("uploads"):
         raise HTTPException(429, "Hourly job limit reached; try again later", headers={"Retry-After": "600"})
+
+    # Housekeeping and a disk check before taking in up to 30 MB: old originals nobody needs are removed (at most every six hours), and
+    # an almost full disk refuses the upload instead of breaking the database's writes.
+    if time.monotonic() - request.app.state.last_upload_sweep > 6 * 3600:
+        request.app.state.last_upload_sweep = time.monotonic()
+        await run_in_threadpool(sweep_old_uploads, cfg.upload_dir, store, cfg.upload_ttl_days)
+    try:
+        free = shutil.disk_usage(cfg.data_dir).free
+    except OSError:
+        free = None
+    if free is not None and free < 2 * cfg.max_upload_bytes:
+        raise HTTPException(507, "The server is almost out of storage; free some space before uploading more.")
 
     doc_id = new_id()
     dest = cfg.upload_dir / doc_id
@@ -100,6 +117,7 @@ async def upload_document(
         shutil.rmtree(dest, ignore_errors=True)
         raise
 
+    limiter.record("uploads")
     worker.wake()
     return UploadOut(document_id=doc_id, job_id=job_id)
 

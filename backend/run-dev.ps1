@@ -7,4 +7,8 @@ foreach ($line in Get-Content (Join-Path $PSScriptRoot '.env')) {
   }
 }
 .\.venv\Scripts\python.exe -m app.admin check
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --port 8000 --host 0.0.0.0
+# Listen on this computer only (the Android emulator reaches it as 10.0.2.2). Everyone on your Wi-Fi could otherwise try to use the server,
+# and the token would travel unencrypted across it. A real phone needs the network address: set SNAPNOTES_DEV_URL in .env to use it.
+$bind = if ($env:SNAPNOTES_DEV_URL) { '0.0.0.0' } else { '127.0.0.1' }
+Write-Host "Listening on $bind" -ForegroundColor DarkGray
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --port 8000 --host $bind

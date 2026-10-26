@@ -17,7 +17,7 @@ cd backend
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
 $env:SNAPNOTES_DEMO = "1"; $env:SNAPNOTES_TOKEN = "dev-token"
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --port 8000   # add --host 0.0.0.0 only for a real phone on your Wi-Fi
 ```
 
 ```bash

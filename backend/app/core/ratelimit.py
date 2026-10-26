@@ -52,6 +52,18 @@ class SlidingWindowLimiter:
         hits.append(now)
         return True
 
+    def would_allow(self, key: str) -> bool:
+        """Whether `allow` would say yes right now, without counting a hit."""
+        hits = self._hits.get(key)
+        if not hits:
+            return True
+        now = self.clock()
+        return sum(1 for h in hits if now - h < self.window) < self.limit
+
+    def record(self, key: str) -> None:
+        """Count a hit without asking (for something that is only known to have happened afterwards)."""
+        self.allow(key)
+
     def prune(self) -> None:
         """Forget every key with no hit inside the window."""
         now = self.clock()
