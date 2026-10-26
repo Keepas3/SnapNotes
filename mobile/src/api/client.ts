@@ -1,5 +1,6 @@
 import { Platform } from 'react-native';
 
+import { allowsLocalHttp } from '@/lib/dev-mode';
 import { readLocalFile } from '@/lib/localFile';
 
 import type {
@@ -142,7 +143,7 @@ export class ApiClient {
 
   private async request<T>(method: string, path: string, opts: RequestOptions = {}): Promise<T> {
     // Checked on every request, not only when the address is typed in: an address saved earlier or handed over by a dev script gets no pass.
-    const insecure = insecureUrlProblem(this.baseUrl, __DEV__);
+    const insecure = insecureUrlProblem(this.baseUrl, allowsLocalHttp());
     if (insecure) throw new ApiError(0, insecure);
     const params = Object.entries(opts.query ?? {}).filter(([, v]) => v !== undefined);
     const qs = params.length

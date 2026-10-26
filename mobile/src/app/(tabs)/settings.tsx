@@ -8,6 +8,7 @@ import { Banner, Button, Card, Centered, Chip, Screen, Spinner } from '@/compone
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { APPEARANCES } from '@/lib/appearance';
+import { allowsLocalHttp } from '@/lib/dev-mode';
 import { useAppearance } from '@/lib/appearance-provider';
 import { confirm } from '@/lib/confirm';
 import { plural } from '@/lib/format';
@@ -59,7 +60,7 @@ function SettingsForm() {
     setMessage(null);
     const url = normalizeBaseUrl(urlInput);
     if (!url) return setMessage({ tone: 'danger', text: `Enter the server address, for example ${URL_HINT}` });
-    const insecure = insecureUrlProblem(url, __DEV__);
+    const insecure = insecureUrlProblem(url, allowsLocalHttp());
     if (insecure) return setMessage({ tone: 'danger', text: insecure });
     if (!tokenInput.trim()) return setMessage({ tone: 'danger', text: 'Enter the access token.' });
 
