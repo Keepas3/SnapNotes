@@ -14,6 +14,8 @@ export interface SyncSummary {
   pages: number;
   /** the server was not the database this phone last synced with, so the library was downloaded afresh */
   reset: boolean;
+  /** the server sent something that changes what the phone shows (a deck, card, folder, schedule or deletion, or a fresh download) */
+  changed: boolean;
 }
 
 /**
@@ -27,7 +29,7 @@ export interface SyncSummary {
  * so the loop keeps going until that history has been re-uploaded too.
  */
 export async function runSync(api: Pick<ApiClient, 'sync'>, store: LocalStore): Promise<SyncSummary> {
-  const summary: SyncSummary = { pushed: 0, cards: 0, pages: 0, reset: false };
+  const summary: SyncSummary = { pushed: 0, cards: 0, pages: 0, reset: false, changed: false };
   const deviceId = await store.deviceId();
 
   for (let page = 0; page < MAX_PAGES; page++) {
@@ -40,6 +42,7 @@ export async function runSync(api: Pick<ApiClient, 'sync'>, store: LocalStore): 
     summary.pushed += res.accepted;
     summary.cards += res.cards.length;
     summary.reset ||= res.reset;
+    summary.changed ||= res.reset || res.decks.length + res.cards.length + (res.folders?.length ?? 0) + res.states.length + res.deleted.length > 0;
 
     const remaining = await store.sendableCount(); // more than one batch of reviews, or reviews re-opened by a reset (answers held back for undo are not counted)
     if (!res.has_more && remaining === 0) return summary;

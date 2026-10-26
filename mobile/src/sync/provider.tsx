@@ -75,11 +75,12 @@ export function SyncProvider({ children }: { children: ReactNode }) {
       lastStart.current = Date.now();
       setStatus((s) => ({ ...s, syncing: true }));
 
+      let changed = false;
       const run = (async () => {
         try {
           do {
             rerun.current = false;
-            await runSync(api, store);
+            changed ||= (await runSync(api, store)).changed;
           } while (rerun.current);
           setStatus({ syncing: false, lastSyncedAt: new Date(), offline: false, error: null });
         } catch (e) {
@@ -87,7 +88,10 @@ export function SyncProvider({ children }: { children: ReactNode }) {
           setStatus((s) => ({ ...s, syncing: false, offline, error: offline ? null : e instanceof Error ? e.message : 'Sync failed.' }));
         } finally {
           inFlight.current = null;
-          queryClient.invalidateQueries({ queryKey: LOCAL_KEY });
+          // Every screen reads the phone's database again only if the server sent something new (the count of reviews waiting to upload
+          // changes with every sync, so that one always does). A sync that found nothing to bring used to stir every screen up each time.
+          queryClient.invalidateQueries({ queryKey: [...LOCAL_KEY, 'pending'] });
+          if (changed) queryClient.invalidateQueries({ queryKey: LOCAL_KEY });
         }
       })();
       inFlight.current = run;

@@ -5,8 +5,11 @@
   After that: opens the server window and the app window with the same settings every time.
 
     .\start.ps1 -Reset    forget the saved settings and ask again (makes a new token)
+    .\start.ps1 -Fast     run the app the way an installed one runs (no development checks, minified): much smoother on the
+                          emulator. The app will not fill in the server and token for you in this mode (that is development-only),
+                          so it keeps the ones it already has; use it after a normal run has connected the app once.
 #>
-param([switch]$Reset)
+param([switch]$Reset, [switch]$Fast)
 
 $root = $PSScriptRoot
 $python = Join-Path $root 'backend\.venv\Scripts\python.exe'
@@ -43,7 +46,8 @@ $devUrl = (Get-Content $envFile | Where-Object { $_ -like 'SNAPNOTES_DEV_URL=*' 
 if (-not $devUrl) { $devUrl = 'http://10.0.2.2:8000' }
 $env:EXPO_PUBLIC_SNAPNOTES_DEV_TOKEN = $saved
 $env:EXPO_PUBLIC_SNAPNOTES_DEV_URL = $devUrl
-Start-Process powershell -WorkingDirectory (Join-Path $root 'mobile') -ArgumentList '-NoExit', '-Command', 'npx expo start --clear'
+$expoCommand = if ($Fast) { 'npx expo start --no-dev --minify --clear' } else { 'npx expo start --clear' }
+Start-Process powershell -WorkingDirectory (Join-Path $root 'mobile') -ArgumentList '-NoExit', '-Command', $expoCommand
 # The app window has its own copy now. Do not leave the token in this terminal, where a later "expo export" or release build run from it
 # would copy it into an app you might share (Expo puts every EXPO_PUBLIC_ variable it sees into the bundle).
 Remove-Item Env:EXPO_PUBLIC_SNAPNOTES_DEV_TOKEN, Env:EXPO_PUBLIC_SNAPNOTES_DEV_URL -ErrorAction SilentlyContinue

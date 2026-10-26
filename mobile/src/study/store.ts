@@ -10,6 +10,11 @@ import { DEFAULT_RETENTION, mostForgotten, newState, RETENTION_CHOICES, reschedu
 /** Cards still in (re)learning that are due within this long are offered early rather than ending the session. */
 export const LEARN_AHEAD_MS = 20 * 60_000;
 export const DEFAULT_NEW_PER_DAY = 10;
+/**
+ * The preferences that every card shown reads (and that change rarely): kept in memory after the first read, so a study tap does not
+ * go to the database six times to ask what it asked a second ago. Everything that changes them goes through `setMeta`.
+ */
+const CACHED_PREFS = new Set(['new_per_day', 'new_order', 'new_mix', 'retention', 'spread', 'mc_on', 'mc_count', 'mc_fill']);
 /** A card missed this many times is a problem card (Anki's default "leech" threshold). */
 export const PROBLEM_LAPSES = 8;
 /** How many of the most overdue reviews are weighed when picking the one most worth showing next; far more than a day's study. */
@@ -165,12 +170,19 @@ export class LocalStore {
 
   // -- key/value ------------------------------------------------------------------------
 
+  private readonly prefCache = new Map<string, string | null>();
+
   async getMeta(key: string): Promise<string | null> {
-    return (await this.db.first<{ value: string }>('SELECT value FROM meta WHERE key = ?', [key]))?.value ?? null;
+    const cached = CACHED_PREFS.has(key);
+    if (cached && this.prefCache.has(key)) return this.prefCache.get(key) ?? null;
+    const value = (await this.db.first<{ value: string }>('SELECT value FROM meta WHERE key = ?', [key]))?.value ?? null;
+    if (cached) this.prefCache.set(key, value);
+    return value;
   }
 
   async setMeta(key: string, value: string): Promise<void> {
     await this.db.run('INSERT INTO meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', [key, value]);
+    if (CACHED_PREFS.has(key)) this.prefCache.set(key, value);
   }
 
   async deviceId(): Promise<string> {
@@ -454,14 +466,16 @@ export class LocalStore {
   async counts(scope: StudyScope, now: Date, newPerDay: number, aheadDays = 0): Promise<StudyCounts> {
     const end = studyDayEnd(now).toISOString();
     const { sql: scoped, args: extra } = scopeClause(scope);
-    const row = await this.db.first<{ new_total: number; learning: number; review: number }>(
+    // One round trip for the counts and for how many new cards today's limit has already used (the limit is shared across decks).
+    const row = await this.db.first<{ new_total: number; learning: number; review: number; new_today: number }>(
       `SELECT COALESCE(SUM(state = 0), 0) AS new_total,
               COALESCE(SUM(state IN (1, 3) AND due <= ?), 0) AS learning,
-              COALESCE(SUM(state = 2 AND due <= ?), 0) AS review
+              COALESCE(SUM(state = 2 AND due <= ?), 0) AS review,
+              (SELECT COUNT(*) FROM review_logs WHERE state_before = 0 AND reviewed_at >= ?) AS new_today
          FROM cards WHERE 1 = 1${scoped}${NOT_PAUSED}`,
-      [end, this.reviewHorizon(now, aheadDays), ...extra],
+      [end, this.reviewHorizon(now, aheadDays), studyDayStart(now).toISOString(), ...extra],
     );
-    const remaining = await this.newRemaining(now, newPerDay);
+    const remaining = Math.max(0, newPerDay - (row?.new_today ?? 0));
     return { new: Math.min(row?.new_total ?? 0, remaining), learning: row?.learning ?? 0, review: row?.review ?? 0 };
   }
 

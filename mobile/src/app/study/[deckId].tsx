@@ -1,3 +1,4 @@
+import { useQueryClient } from '@tanstack/react-query';
 import { Stack, router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Switch, View } from 'react-native';
@@ -14,8 +15,8 @@ import { parseStudyScope } from '@/lib/folders';
 import type { SwipeDirection } from '@/lib/swipe';
 import { ANSWERS, describeInterval, previewDue, ratingForSwipe, type RatingValue } from '@/study/scheduler';
 import { PROBLEM_LAPSES, type LocalCard, type StudyCounts } from '@/study/store';
-import { useChoicePrefs, useInvalidateLocal, useSetChoicePrefs } from '@/study/hooks';
-import { useSync } from '@/sync/provider';
+import { useChoicePrefs, useSetChoicePrefs } from '@/study/hooks';
+import { LOCAL_KEY, useSync } from '@/sync/provider';
 
 interface Step {
   card: LocalCard | null;
@@ -55,7 +56,7 @@ export default function StudyScreen() {
   const practiceTotal = useRef(0);
   const practiceHistory = useRef<{ id: string; knew: boolean }[]>([]); // practice: the answers that can be taken back, most recent last
   const { store, storeError, status, sync } = useSync();
-  const invalidateLocal = useInvalidateLocal();
+  const queryClient = useQueryClient();
 
   const [step, setStep] = useState<Step | null>(null);
   const [revealed, setRevealed] = useState(false);
@@ -151,6 +152,15 @@ export default function StudyScreen() {
     };
   }, [store, practice]);
 
+  // Home, Stats and the rest are only told what changed once, when this screen closes. Telling them after every tap made each tap also
+  // recount every deck and folder and rebuild the stats, behind a screen nobody was looking at.
+  useEffect(
+    () => () => {
+      void queryClient.invalidateQueries({ queryKey: LOCAL_KEY });
+    },
+    [queryClient],
+  );
+
   // When the session is over, push the reviews right away rather than waiting for the next trigger.
   const finished = step !== null && step.card === null;
   useEffect(() => {
@@ -164,10 +174,8 @@ export default function StudyScreen() {
     try {
       await store.answer(step.card.id, rating, new Date(), msSince(shownAt.current));
       setAnswered((n) => n + 1);
-      setUndoable(await store.undoCount());
-      invalidateLocal();
+      setUndoable((n) => n + 1); // every answer made while this screen is open can be undone, so no need to ask the database
       show(await fetchStep());
-      void sync({ minIntervalMs: 20_000 });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not save that answer.');
     } finally {
@@ -204,7 +212,6 @@ export default function StudyScreen() {
       await store.pauseCard(step.card.id);
       if (practice) queue.current?.splice(0, 1);
       setPaused((n) => n + 1);
-      invalidateLocal();
       show(await fetchStep());
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not pause that card.');
@@ -236,7 +243,6 @@ export default function StudyScreen() {
       if (!card) return; // nothing to take back any more
       setAnswered((n) => Math.max(0, n - 1));
       setPaused((n) => n + 1); // draw the card afresh
-      invalidateLocal();
       show(await fetchStep(card));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not undo that answer.');

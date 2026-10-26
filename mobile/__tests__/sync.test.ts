@@ -31,7 +31,7 @@ describe('runSync', () => {
 
     const summary = await runSync(api, store);
 
-    expect(summary).toEqual({ pushed: 1, cards: 1, pages: 1, reset: false });
+    expect(summary).toEqual({ pushed: 1, cards: 1, pages: 1, reset: false, changed: true });
     expect(requests).toHaveLength(1);
     expect(requests[0].logs.map((l) => l.card_id)).toEqual(['c1']);
     expect(requests[0].cursor).toBe(1); // seeded earlier
@@ -101,7 +101,7 @@ describe('runSync', () => {
   it('works with nothing to send and nothing new', async () => {
     const { store } = await makeStore();
     const { api, requests } = fakeApi([response({ cursor: 0 })]);
-    expect(await runSync(api, store)).toEqual({ pushed: 0, cards: 0, pages: 1, reset: false });
+    expect(await runSync(api, store)).toEqual({ pushed: 0, cards: 0, pages: 1, reset: false, changed: false });
     expect(requests[0].logs).toEqual([]);
   });
 
