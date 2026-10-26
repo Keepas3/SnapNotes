@@ -1,3 +1,4 @@
+import { router } from 'expo-router';
 import { useState } from 'react';
 import { KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -7,13 +8,13 @@ import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { confirm } from '@/lib/confirm';
 import { plural } from '@/lib/format';
-import { folderNameProblem, MAX_FOLDER_NAME } from '@/lib/folders';
+import { folderNameProblem, MAX_FOLDER_NAME, studyParam } from '@/lib/folders';
 
 import { ThemedText } from './themed-text';
 import { Banner, Button } from './ui';
 
 /** Make a new folder, or rename or delete an existing one. */
-export type FolderSheetTarget = { mode: 'new' } | { mode: 'edit'; folder: { id: string; name: string }; deckCount: number };
+export type FolderSheetTarget = { mode: 'new' } | { mode: 'edit'; folder: { id: string; name: string }; deckCount: number; cards?: number };
 
 interface Props {
   /** What the sheet is for; it is hidden while this is null. */
@@ -104,6 +105,16 @@ function SheetBody({ target, onClose, onChanged }: Props & { target: FolderSheet
 
       {editing ? (
         <>
+          {(editing.cards ?? 0) > 0 ? (
+            <Button
+              title={`Practice all ${editing.cards} cards`}
+              variant="secondary"
+              onPress={() => {
+                onClose();
+                router.push({ pathname: '/study/[deckId]', params: { deckId: studyParam({ folderId: editing.folder.id }), mode: 'all' } });
+              }}
+            />
+          ) : null}
           <ThemedText type="caption" themeColor="textSecondary">
             Put decks in this folder from a deck’s ☰ menu, or by holding a deck and dropping it on the folder. Deleting a folder never deletes its decks.
           </ThemedText>

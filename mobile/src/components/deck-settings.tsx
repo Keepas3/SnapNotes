@@ -3,20 +3,23 @@ import { useState } from 'react';
 import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { useCreateFolder, useDecks, useFolders, useMergeDecks, useRenameDeck, useSetDeckFolder } from '@/api/hooks';
+import { useCreateFolder, useDeleteDeck, useDecks, useFolders, useMergeDecks, useRenameDeck, useSetDeckFolder } from '@/api/hooks';
 import type { Deck } from '@/api/types';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { confirm } from '@/lib/confirm';
-import { deckNameProblem, MAX_DECK_NAME, mergeCandidates, mergeDeckMessage } from '@/lib/deck';
+import { deckNameProblem, deleteDeckMessage, MAX_DECK_NAME, mergeCandidates, mergeDeckMessage } from '@/lib/deck';
 import { folderNameProblem } from '@/lib/folders';
 import { plural } from '@/lib/format';
 
 import { ThemedText } from './themed-text';
 import { Banner, Button, Card, Spinner } from './ui';
 
-/** The deck being configured, and the folder it is filed in (if any). */
-type SheetDeck = { id: string; name: string; folderId?: string | null };
+/**
+ * The deck being configured, and the folder it is filed in (if any). Home also says how many cards it has, how many are paused and how many
+ * wait for review, which adds "Practice all" and "Delete deck" to the sheet (the deck's own screen has its own Delete button).
+ */
+type SheetDeck = { id: string; name: string; folderId?: string | null; total?: number; paused?: number; drafts?: number };
 
 interface Props {
   /** The deck being configured; the sheet is hidden while this is null. */
@@ -43,6 +46,7 @@ function SheetBody({ deck, onClose, onChanged }: Props & { deck: SheetDeck }) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const rename = useRenameDeck();
+  const remove = useDeleteDeck();
   const [name, setName] = useState(deck.name);
   const [error, setError] = useState<string | null>(null);
   const [merging, setMerging] = useState(false);
@@ -65,6 +69,25 @@ function SheetBody({ deck, onClose, onChanged }: Props & { deck: SheetDeck }) {
       onClose();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not rename the deck.');
+    }
+  }
+
+  const practiceCount = (deck.total ?? 0) - (deck.paused ?? 0);
+
+  function practice() {
+    onClose();
+    router.push({ pathname: '/study/[deckId]', params: { deckId: deck.id, mode: 'all' } });
+  }
+
+  async function del() {
+    if (!(await confirm(`Delete “${deck.name}”?`, deleteDeckMessage(deck.total ?? 0, deck.drafts ?? 0), 'Delete', true))) return;
+    setError(null);
+    try {
+      await remove.mutateAsync(deck.id);
+      await onChanged?.();
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not delete the deck.');
     }
   }
 
@@ -139,6 +162,20 @@ function SheetBody({ deck, onClose, onChanged }: Props & { deck: SheetDeck }) {
             onClose();
           }}
         />
+      ) : null}
+
+      {deck.total !== undefined ? (
+        <>
+          {practiceCount > 0 ? (
+            <>
+              <ThemedText type="smallBold">Study</ThemedText>
+              <Card>
+                <ActionRow title={`Practice all ${practiceCount} cards`} hint="Go through every card, due or not. It does not change when cards come back." onPress={practice} />
+              </Card>
+            </>
+          ) : null}
+          <Button title="Delete deck" variant="danger" onPress={del} loading={remove.isPending} />
+        </>
       ) : null}
     </ScrollView>
   );

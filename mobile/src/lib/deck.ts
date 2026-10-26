@@ -8,6 +8,25 @@ export const MAX_DECK_NAME = 80;
 /** The longest text the server accepts on one side of a card typed by hand (backend CardIn). */
 export const MAX_CARD_TEXT = 2000;
 
+/** What a deck's line says under its name: how many cards, what is due, and anything that needs a look. */
+export function deckCaption(
+  deck: { total: number; paused: number; problem: number; new: number; learning: number; review: number },
+  drafts = 0,
+): string {
+  const due = deck.learning + deck.review;
+  const parts = [due > 0 && `${due} due`, deck.new > 0 && `${deck.new} new`].filter(Boolean) as string[];
+  const state = parts.length ? parts.join(' · ') : deck.total > deck.paused ? 'nothing due' : deck.total > 0 ? 'all paused' : 'none approved yet';
+  return [
+    plural(deck.total, 'card'),
+    state,
+    deck.problem > 0 && plural(deck.problem, 'problem card'),
+    deck.paused > 0 && deck.total > deck.paused && `${deck.paused} paused`,
+    drafts > 0 && `${drafts} to review`,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
 /** Why a deck name cannot be saved, or null when it can. */
 export function deckNameProblem(name: string): string | null {
   const trimmed = name.trim();

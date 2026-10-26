@@ -106,6 +106,7 @@ export function Button({
   title,
   onPress,
   variant = 'primary',
+  size = 'normal',
   disabled,
   loading,
   style,
@@ -113,6 +114,8 @@ export function Button({
   title: string;
   onPress: () => void;
   variant?: ButtonVariant;
+  /** `small` is for a button that sits in a row of text (a Study button on a deck's line). */
+  size?: 'normal' | 'small';
   disabled?: boolean;
   loading?: boolean;
   style?: StyleProp<ViewStyle>;
@@ -134,12 +137,13 @@ export function Button({
       onPress={onPress}
       style={({ pressed }) => [
         styles.button,
+        size === 'small' && styles.buttonSmall,
         { backgroundColor: p.bg, borderColor: p.border ?? 'transparent' },
         inactive && styles.disabled,
         pressed && styles.pressed,
         style,
       ]}>
-      {loading ? <ActivityIndicator color={theme[p.fg]} /> : <ThemedText type="smallBold" themeColor={p.fg} style={styles.buttonText}>{title}</ThemedText>}
+      {loading ? <ActivityIndicator color={theme[p.fg]} /> : <ThemedText type="smallBold" themeColor={p.fg} style={size === 'small' ? styles.buttonTextSmall : styles.buttonText}>{title}</ThemedText>}
     </Pressable>
   );
 }
@@ -300,7 +304,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  buttonSmall: { minHeight: 36, borderRadius: 12, paddingHorizontal: Spacing.two },
   buttonText: { fontSize: 16, lineHeight: 22 },
+  buttonTextSmall: { fontSize: 14, lineHeight: 18 },
   iconButton: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
   iconGlyph: { fontSize: 13, lineHeight: 16, textAlign: 'center' },
   chip: { borderRadius: 999, borderWidth: StyleSheet.hairlineWidth, paddingHorizontal: 14, paddingVertical: 8, minHeight: 36, justifyContent: 'center' },

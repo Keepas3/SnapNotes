@@ -328,13 +328,13 @@ export class LocalStore {
     return this.db.all<{ id: string; back: string }>("SELECT id, back FROM cards WHERE deck_id = ? AND id != ? AND type IN ('basic', 'definition') AND back != ''", [deckId, exceptCardId]);
   }
 
-  /** The folders the user has collapsed on Home (a preference of this phone; folders start open). */
-  closedFolders(): Promise<string[]> {
-    return this.idList('folders_closed');
+  /** The folders the user has opened on Home (a preference of this phone; folders start closed, so Home stays short with many of them). */
+  openFolders(): Promise<string[]> {
+    return this.idList('folders_open');
   }
 
-  setClosedFolders(ids: string[]): Promise<void> {
-    return this.setMeta('folders_closed', JSON.stringify(ids));
+  setOpenFolders(ids: string[]): Promise<void> {
+    return this.setMeta('folders_open', JSON.stringify(ids));
   }
 
   /**

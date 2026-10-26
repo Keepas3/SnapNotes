@@ -52,9 +52,53 @@ export function homeRows(decks: { id: string; folder_id: string | null }[], fold
   return rows;
 }
 
+/** True when `text` contains `query` (ignoring case and the spaces around the query). */
+export function matchesQuery(text: string, query: string): boolean {
+  return text.toLowerCase().includes(query.trim().toLowerCase());
+}
+
+/**
+ * The Home list narrowed by a search. With nothing typed it is exactly `homeRows`. With a search, a deck is kept when its name or topic
+ * contains the text; a folder is kept when its own name does (with all its decks) or when it holds a matching deck (with just those decks).
+ * Folders are listed open while searching, whatever was closed before, because the point is to see the matches.
+ */
+export function filterHomeRows(
+  decks: { id: string; name: string; topic?: string; folder_id: string | null }[],
+  folders: { id: string; name: string }[],
+  order: string[],
+  closed: ReadonlySet<string>,
+  query: string,
+): HomeRow[] {
+  if (!query.trim()) return homeRows(decks, folders, order, closed);
+  const ordered = orderDecks(decks, order);
+  const known = new Set(folders.map((f) => f.id));
+  const deckMatches = (d: { name: string; topic?: string }) => matchesQuery(d.name, query) || matchesQuery(d.topic ?? '', query);
+  const rows: HomeRow[] = [];
+  for (const folder of folders) {
+    const inside = ordered.filter((d) => d.folder_id === folder.id);
+    const folderMatches = matchesQuery(folder.name, query);
+    const shown = folderMatches ? inside : inside.filter(deckMatches);
+    if (!folderMatches && shown.length === 0) continue;
+    rows.push({ kind: 'folder', id: folder.id });
+    for (const deck of shown) rows.push({ kind: 'deck', id: deck.id, folderId: folder.id });
+  }
+  const loose = ordered.filter((d) => (!d.folder_id || !known.has(d.folder_id)) && deckMatches(d));
+  if (loose.length > 0) {
+    if (rows.length > 0) rows.push({ kind: 'unfiled' });
+    for (const deck of loose) rows.push({ kind: 'deck', id: deck.id, folderId: null });
+  }
+  return rows;
+}
+
 /** "3 decks · 42 cards" */
 export function folderSubtitle(decks: number, cards: number): string {
   return `${decks} ${decks === 1 ? 'deck' : 'decks'} · ${cards} ${cards === 1 ? 'card' : 'cards'}`;
+}
+
+/** What a folder's line says under its name: its size and what is due in it. */
+export function folderCaption(folder: { decks: number; total: number }, due: number, fresh: number): string {
+  const parts = [due > 0 && `${due} due`, fresh > 0 && `${fresh} new`].filter(Boolean) as string[];
+  return `${folderSubtitle(folder.decks, folder.total)} · ${parts.length ? parts.join(' · ') : folder.total > 0 ? 'nothing due' : 'empty'}`;
 }
 
 // -- dragging a deck -----------------------------------------------------------------------

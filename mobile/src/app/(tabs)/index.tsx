@@ -1,11 +1,12 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { Redirect, router, useFocusEffect } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
-import { Pressable, RefreshControl, StyleSheet, View } from 'react-native';
+import { Pressable, RefreshControl, StyleSheet, TextInput, View } from 'react-native';
 
 import { ApiError } from '@/api/client';
-import { useDecks, useDeleteDeck, useJobs, useSetDeckFolder } from '@/api/hooks';
+import { useDecks, useJobs, useSetDeckFolder } from '@/api/hooks';
 import type { Job } from '@/api/types';
+import { DeckPickerSheet } from '@/components/deck-picker';
 import { DeckSettingsSheet } from '@/components/deck-settings';
 import { DraggableRow } from '@/components/draggable-row';
 import { FolderSheet, type FolderSheetTarget } from '@/components/folder-sheet';
@@ -13,13 +14,12 @@ import { ThemedText } from '@/components/themed-text';
 import { Badge, Banner, Button, Card, Centered, EmptyState, IconButton, Screen, Section, Spinner } from '@/components/ui';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import { confirm } from '@/lib/confirm';
-import { deleteDeckMessage, dragShift, moveItem, orderDecks, type RowBox } from '@/lib/deck';
-import { dropTarget, folderSubtitle, homeRows, reorderWithin, siblingIndexes, studyParam, type DropTarget, type HomeRow } from '@/lib/folders';
+import { deckCaption, dragShift, moveItem, orderDecks, type RowBox } from '@/lib/deck';
+import { dropTarget, filterHomeRows, folderCaption, folderSubtitle, reorderWithin, siblingIndexes, studyParam, type DropTarget, type HomeRow } from '@/lib/folders';
 import { plural } from '@/lib/format';
 import { useSettings } from '@/lib/settings';
 import { JOB_STATUS_LABEL } from '@/lib/steps';
-import { useClosedFolders, useDeckOrder, useLocalDecks, useLocalFolders, usePendingReviews, useSetClosedFolders, useSetDeckOrder, useStudyCounts } from '@/study/hooks';
+import { useDeckOrder, useLocalDecks, useLocalFolders, useOpenFolders, usePendingReviews, useSetDeckOrder, useSetOpenFolders, useStudyCounts } from '@/study/hooks';
 import type { DeckSummary, FolderSummary } from '@/study/store';
 import { LOCAL_KEY, useSync } from '@/sync/provider';
 
@@ -46,8 +46,11 @@ function HomeContent() {
   const savedOrder = useDeckOrder(); // the order the user dragged the decks into, kept on this phone
   const saveOrder = useSetDeckOrder();
   const localFolders = useLocalFolders(); // folders as the phone knows them
-  const closedFolders = useClosedFolders(); // which folders are collapsed (a preference of this phone)
-  const saveClosed = useSetClosedFolders();
+  const openFolders = useOpenFolders(); // which folders are open (a preference of this phone; the rest are closed)
+  const saveOpen = useSetOpenFolders();
+  const theme = useTheme();
+  const [query, setQuery] = useState(''); // what is typed in the search box
+  const [pickerOpen, setPickerOpen] = useState(false); // the all-decks list
   const fileDeck = useSetDeckFolder(); // dropping a deck on a folder changes the library on the server
   const [folderSheet, setFolderSheet] = useState<FolderSheetTarget | null>(null);
   const [moveError, setMoveError] = useState<string | null>(null);
@@ -77,9 +80,12 @@ function HomeContent() {
   const draftCounts = new Map((serverDecks.data ?? []).map((d) => [d.id, d.counts.draft]));
   const decks = local.data ?? [];
   const folders = localFolders.data ?? [];
-  const closed = new Set(closedFolders.data ?? []);
+  const open = new Set(openFolders.data ?? []);
+  const closed = new Set(folders.filter((f) => !open.has(f.id)).map((f) => f.id));
+  const searching = query.trim().length > 0;
+  const showTools = decks.length + folders.length >= TOOLS_FROM; // with only a few decks, a search box would just be in the way
   const orderedIds = orderDecks(decks, savedOrder.data ?? []).map((d) => d.id); // every deck, in the order the user arranged them
-  const rows = homeRows(decks, folders, savedOrder.data ?? [], closed);
+  const rows = filterHomeRows(decks, folders, savedOrder.data ?? [], closed, query);
   const deckById = new Map(decks.map((d) => [d.id, d]));
   const folderById = new Map(folders.map((f) => [f.id, f]));
   const waiting = decks.reduce((n, d) => n + d.new + d.learning + d.review, 0);
@@ -117,6 +123,7 @@ function HomeContent() {
       setMoveError(null);
       try {
         await fileDeck.mutateAsync({ deckId: heldRow.id, folderId: target.type === 'folder' ? target.folderId : null });
+        if (target.type === 'folder' && !open.has(target.folderId)) saveOpen.mutate([...open, target.folderId]); // so the deck is seen to land
         await refreshPhone();
       } catch (e) {
         setMoveError(e instanceof Error ? e.message : 'Could not move the deck.');
@@ -129,7 +136,11 @@ function HomeContent() {
     if (to >= 0 && to < siblings.length) saveReorder(from, to);
   }
   function toggleFolder(id: string) {
-    saveClosed.mutate(closed.has(id) ? [...closed].filter((x) => x !== id) : [...closed, id]);
+    saveOpen.mutate(open.has(id) ? [...open].filter((x) => x !== id) : [...open, id]);
+  }
+  const everyFolderClosed = folders.every((f) => !open.has(f.id));
+  function toggleAllFolders() {
+    saveOpen.mutate(everyFolderClosed ? folders.map((f) => f.id) : []);
   }
 
   /** The phone's list is its own copy of the library, so bring it up to date as soon as the server has changed. */
@@ -181,13 +192,43 @@ function HomeContent() {
 
       <Section title="Your decks" right={<Button title="New folder" variant="ghost" onPress={() => setFolderSheet({ mode: 'new' })} />}>
         {moveError ? <Banner message={moveError} /> : null}
+        {showTools ? (
+          <View style={styles.tools}>
+            <View style={[styles.searchBox, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+              <TextInput
+                accessibilityLabel="Search decks"
+                style={[styles.searchInput, { color: theme.text }]}
+                value={query}
+                onChangeText={setQuery}
+                placeholder="Search decks and folders"
+                placeholderTextColor={theme.textSecondary}
+                autoCorrect={false}
+                returnKeyType="search"
+              />
+              {query ? <IconButton glyph="✕" label="Clear search" onPress={() => setQuery('')} /> : null}
+            </View>
+            <Button title="All decks" size="small" variant="secondary" onPress={() => setPickerOpen(true)} />
+          </View>
+        ) : null}
+        {folders.length >= 2 && !searching ? (
+          <View style={styles.rowBetween}>
+            <ThemedText type="caption" themeColor="textSecondary">
+              {plural(decks.length, 'deck')} · {plural(folders.length, 'folder')}
+            </ThemedText>
+            <Button title={everyFolderClosed ? 'Expand all' : 'Collapse all'} size="small" variant="ghost" onPress={toggleAllFolders} />
+          </View>
+        ) : null}
         {local.isPending ? (
           <Spinner />
         ) : rows.length === 0 ? (
-          <EmptyState
-            title={status.syncing ? 'Loading your decks…' : 'No decks yet'}
-            message="Upload a PDF, slides, a document, or photos of your notes and SnapNotes will turn them into flashcards."
-          />
+          searching ? (
+            <EmptyState title={`No deck matches “${query.trim()}”`} message="Check the spelling, or clear the search to see everything." />
+          ) : (
+            <EmptyState
+              title={status.syncing ? 'Loading your decks…' : 'No decks yet'}
+              message="Upload a PDF, slides, a document, or photos of your notes and SnapNotes will turn them into flashcards."
+            />
+          )
         ) : (
           rows.map((row, i) => {
             const key = rowKey(row);
@@ -199,10 +240,10 @@ function HomeContent() {
                 <View key={key} onLayout={onLayout}>
                   <FolderRow
                     folder={folder}
-                    open={!closed.has(folder.id)}
+                    open={searching || open.has(folder.id)}
                     highlighted={drag?.target.type === 'folder' && drag.target.folderId === folder.id}
                     onToggle={() => toggleFolder(folder.id)}
-                    onSettings={() => setFolderSheet({ mode: 'edit', folder: { id: folder.id, name: folder.name }, deckCount: folder.decks })}
+                    onSettings={() => setFolderSheet({ mode: 'edit', folder: { id: folder.id, name: folder.name }, deckCount: folder.decks, cards: folder.total - folder.paused })}
                   />
                 </View>
               );
@@ -219,6 +260,14 @@ function HomeContent() {
             const deck = deckById.get(row.id);
             if (!deck) return null;
             const siblings = siblingIndexes(rows, i);
+            if (searching) {
+              // The rows are a filtered list, not the real order, so there is nothing to drag them within.
+              return (
+                <View key={key} onLayout={onLayout} style={row.folderId ? styles.indented : null}>
+                  <DeckRow deck={deck} drafts={draftCounts.get(deck.id) ?? 0} />
+                </View>
+              );
+            }
             return (
               // Press and hold a deck, then drag: the held deck follows the finger and the ones it passes make room.
               <DraggableRow
@@ -244,13 +293,14 @@ function HomeContent() {
       </Section>
 
       <FolderSheet target={folderSheet} onClose={() => setFolderSheet(null)} onChanged={refreshPhone} />
+      <DeckPickerSheet visible={pickerOpen} onClose={() => setPickerOpen(false)} decks={decks} folders={folders} order={savedOrder.data ?? []} />
 
       <SyncFooter pending={pending.data ?? 0} />
     </Screen>
   );
 }
 
-/** A folder: its name and what it holds, a Study button for everything in it, and a chevron to hide or show its decks. */
+/** A folder on one line: its name and what is due in it, a Study button for everything in it, and a chevron to hide or show its decks. */
 function FolderRow({
   folder,
   open,
@@ -268,9 +318,8 @@ function FolderRow({
   const counts = useStudyCounts({ folderId: folder.id }); // counted for the folder as a whole, so the shared daily new-card limit holds
   const due = (counts.data?.learning ?? 0) + (counts.data?.review ?? 0);
   const fresh = counts.data?.new ?? 0;
-  const parts = [due > 0 && `${due} due`, fresh > 0 && `${fresh} new`].filter(Boolean) as string[];
   return (
-    <Card style={highlighted ? { borderColor: theme.tint, borderWidth: 2, backgroundColor: theme.backgroundSelected } : undefined}>
+    <Card style={[styles.rowCard, highlighted ? { borderColor: theme.tint, borderWidth: 2, backgroundColor: theme.backgroundSelected } : null]}>
       <View style={styles.deckHeader}>
         <IconButton glyph="☰" label={`Settings for folder ${folder.name}`} onPress={onSettings} />
         <Pressable
@@ -279,23 +328,25 @@ function FolderRow({
           accessibilityState={{ expanded: open }}
           onPress={onToggle}
           style={({ pressed }) => [styles.flex, styles.folderTitle, pressed && styles.pressed]}>
-          <ThemedText type="heading" numberOfLines={1} style={styles.flex}>
-            {folder.name}
-          </ThemedText>
+          <View style={styles.flex}>
+            <ThemedText type="smallBold" numberOfLines={1}>
+              {folder.name}
+            </ThemedText>
+            <ThemedText type="caption" themeColor="textSecondary" numberOfLines={1}>
+              {folderCaption(folder, due, fresh)}
+            </ThemedText>
+          </View>
           <ThemedText themeColor="textSecondary">{open ? '⌃' : '⌄'}</ThemedText>
         </Pressable>
+        {due + fresh > 0 ? (
+          <Button
+            title={`Study ${due + fresh}`}
+            size="small"
+            variant="secondary"
+            onPress={() => router.push({ pathname: '/study/[deckId]', params: { deckId: studyParam({ folderId: folder.id }) } })}
+          />
+        ) : null}
       </View>
-      <ThemedText type="small" themeColor="textSecondary">
-        {folderSubtitle(folder.decks, folder.total)} · {parts.length ? parts.join(' · ') : folder.total > 0 ? 'nothing due' : 'empty'}
-      </ThemedText>
-      {folder.total - folder.paused > 0 ? (
-        <View style={styles.studyButtons}>
-          {due + fresh > 0 ? (
-            <Button title={`Study folder (${due + fresh})`} variant="secondary" style={styles.flex} onPress={() => router.push({ pathname: '/study/[deckId]', params: { deckId: studyParam({ folderId: folder.id }) } })} />
-          ) : null}
-          <Button title={`All ${folder.total - folder.paused}`} variant="ghost" style={styles.flex} onPress={() => router.push({ pathname: '/study/[deckId]', params: { deckId: studyParam({ folderId: folder.id }), mode: 'all' } })} />
-        </View>
-      ) : null}
     </Card>
   );
 }
@@ -346,15 +397,12 @@ function JobRow({ job }: { job: Job }) {
   );
 }
 
+/** A deck on one line: its name and what is due, and a Study button. Everything else is in its ☰ menu. */
 function DeckRow({ deck, drafts, onMove }: { deck: DeckSummary; drafts: number; onMove?: (direction: -1 | 1) => void }) {
   const queryClient = useQueryClient();
   const { sync } = useSync();
-  const remove = useDeleteDeck();
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const due = deck.learning + deck.review;
-  const studyable = due + deck.new;
-  const parts = [due > 0 && `${due} due`, deck.new > 0 && `${deck.new} new`].filter(Boolean) as string[];
+  const studyable = deck.learning + deck.review + deck.new;
   const open = () => router.push({ pathname: '/decks/[id]', params: { id: deck.id } });
 
   /** The phone's list is its own copy of the library, so bring it up to date as soon as the server has changed. */
@@ -363,19 +411,8 @@ function DeckRow({ deck, drafts, onMove }: { deck: DeckSummary; drafts: number; 
     await sync();
   }
 
-  async function onDelete() {
-    if (!(await confirm(`Delete “${deck.name}”?`, deleteDeckMessage(deck.total, drafts), 'Delete', true))) return;
-    setError(null);
-    try {
-      await remove.mutateAsync(deck.id);
-      await refreshPhone();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not delete the deck.');
-    }
-  }
-
   return (
-    <Card>
+    <Card style={styles.rowCard}>
       {/* Buttons and the tappable parts are siblings: nesting one pressable in another is invalid on the web. */}
       <View style={styles.deckHeader}>
         <IconButton glyph="☰" label={`Settings for ${deck.name}`} onPress={() => setSettingsOpen(true)} />
@@ -386,45 +423,36 @@ function DeckRow({ deck, drafts, onMove }: { deck: DeckSummary; drafts: number; 
           onAccessibilityAction={(e) => onMove?.(e.nativeEvent.actionName === 'decrement' ? -1 : 1)}
           onPress={open}
           style={({ pressed }) => [styles.flex, pressed && styles.pressed]}>
-          <ThemedText type="heading" numberOfLines={1}>
+          <ThemedText type="smallBold" numberOfLines={1}>
             {deck.name}
           </ThemedText>
+          <ThemedText type="caption" themeColor={drafts > 0 ? 'warning' : 'textSecondary'} numberOfLines={1}>
+            {deckCaption(deck, drafts)}
+          </ThemedText>
         </Pressable>
-        <IconButton glyph={'✕'} label={`Delete ${deck.name}`} tone="danger" onPress={onDelete} loading={remove.isPending} />
-      </View>
-      <Pressable accessibilityRole="button" accessibilityLabel={`Open ${deck.name}`} onPress={open} style={({ pressed }) => [styles.summary, pressed && styles.pressed]}>
-        {deck.topic ? (
-          <ThemedText type="caption" themeColor="textSecondary">
-            {deck.topic}
-          </ThemedText>
+        {studyable > 0 ? (
+          <Button title={`Study ${studyable}`} size="small" variant="secondary" onPress={() => router.push({ pathname: '/study/[deckId]', params: { deckId: deck.id } })} />
         ) : null}
-        <View style={styles.rowBetween}>
-          <ThemedText type="small" themeColor="textSecondary" style={styles.flex}>
-            {plural(deck.total, 'card')} · {parts.length ? parts.join(' · ') : deck.total > deck.paused ? 'nothing due' : deck.total > 0 ? 'all paused' : 'none approved yet'}
-            {deck.problem > 0 ? ` · ${plural(deck.problem, 'problem card')}` : ''}
-            {deck.paused > 0 && deck.total > deck.paused ? ` · ${deck.paused} paused` : ''}
-          </ThemedText>
-          {drafts > 0 ? <Badge label={`${drafts} to review`} tone="warning" /> : null}
-        </View>
-      </Pressable>
-      {error ? <Banner message={error} /> : null}
-      {deck.total - deck.paused > 0 ? (
-        <View style={styles.studyButtons}>
-          {studyable > 0 ? (
-            <Button title={`Study (${studyable})`} variant="secondary" style={styles.flex} onPress={() => router.push({ pathname: '/study/[deckId]', params: { deckId: deck.id } })} />
-          ) : null}
-          <Button title={`All ${deck.total - deck.paused}`} variant="ghost" style={styles.flex} onPress={() => router.push({ pathname: '/study/[deckId]', params: { deckId: deck.id, mode: 'all' } })} />
-        </View>
-      ) : null}
-      <DeckSettingsSheet deck={settingsOpen ? { id: deck.id, name: deck.name, folderId: deck.folder_id } : null} onClose={() => setSettingsOpen(false)} onChanged={refreshPhone} />
+      </View>
+      <DeckSettingsSheet
+        deck={settingsOpen ? { id: deck.id, name: deck.name, folderId: deck.folder_id, total: deck.total, paused: deck.paused, drafts } : null}
+        onClose={() => setSettingsOpen(false)}
+        onChanged={refreshPhone}
+      />
     </Card>
   );
 }
 
 /** The space between deck cards in the list; the same as the gap `Section` puts between its children. */
 const DECK_GAP = Spacing.two;
+/** The search box and the all-decks button appear once there are this many decks and folders in all. */
+const TOOLS_FROM = 6;
 
 const styles = StyleSheet.create({
+  rowCard: { padding: Spacing.two, gap: 0, borderRadius: 12 },
+  tools: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  searchBox: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: Spacing.two, minHeight: 40, borderRadius: 12, borderWidth: StyleSheet.hairlineWidth, paddingHorizontal: Spacing.three },
+  searchInput: { flex: 1, fontSize: 16, paddingVertical: Spacing.one },
   indented: { marginLeft: Spacing.three },
   folderTitle: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
   unfiled: { paddingTop: Spacing.two, paddingHorizontal: Spacing.one, borderRadius: 8 },
@@ -432,8 +460,6 @@ const styles = StyleSheet.create({
   rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.two },
   deckHeader: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
   flex: { flex: 1 },
-  studyButtons: { flexDirection: 'row', gap: 8 },
-  summary: { gap: Spacing.two },
   pressed: { opacity: 0.75 },
   syncRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.two },
 });

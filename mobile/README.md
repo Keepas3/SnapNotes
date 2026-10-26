@@ -76,14 +76,15 @@ A bar at the bottom moves between **Decks** (Home), **Stats** and **Settings**. 
 
 ## Managing decks
 
-Each deck on the home screen has two small buttons: the **✕** at the top right deletes the deck (after an "are you sure" that says how many cards go with it; this needs a connection, because the server holds the library), and the **⚙** at the top left opens the deck's settings. The same sheet is also reachable from inside a deck, with **Settings** at the top right. From it you can:
+Each deck on the home screen is one line: a **☰** button, its name over a short summary (cards, what is due and new, anything needing a look), and a **Study** button when something is due. Tap the name to open the deck; **☰** opens the deck's settings. The same sheet is also reachable from inside a deck, with **Settings** at the top right. From it you can:
 
 - **Rename** the deck.
 - **Add notes to this deck.** Opens the upload screen aimed at the deck ("Add to “…”"). The new cards arrive as drafts in that deck for you to review, the deck's name stays, and any card that repeats one already in the deck is set aside with "Already in this deck." (only near-identical questions are caught, not reworded ones). The job screen says "Adding to “…”" and counts only this upload's cards.
 - **Type a card.** One question and answer you write yourself, either "Question and answer" or "Fill in the blank" (wrap the answer like `{{c1::answer}}`; an explanation is optional). It is approved straight away, labelled "Added by you", and can be studied after the sync that starts when you save.
 - **Merge another deck into this one.** Pick a deck from the list; after an "are you sure" that says how many cards move, all its cards (including ones still waiting for review) join this deck, your study progress on them is kept, and the other deck is removed. This deck keeps its title. It cannot be undone.
+- **Practice all N cards** (from Home's menu), and **Delete deck**, after an "are you sure" that says how many cards go with it (this needs a connection, because the server holds the library). The delete button used to sit on every deck's line; it is in the menu so it is not hit by mistake.
 
-**Reordering:** with two or more decks, press and hold anywhere on a deck card for about half a second (a phone with a vibration motor gives a small buzz), then drag up or down. The other decks slide out of the way and the deck lands where you let go (a drag shorter than half a card changes nothing). A quick tap still opens the deck, buttons on the card still work, and scrolling the page is unaffected until a hold is up. Screen readers get "Move up" and "Move down" actions on the deck's title. The order is saved on this phone only (it is a preference, not part of the library, so it is not synced); a deck you have not placed yet, such as a new one, appears at the top. The page does not scroll while you hold a deck, so with a very long list, drag in steps.
+**Reordering:** with two or more decks, press and hold anywhere on a deck's line for about half a second (a phone with a vibration motor gives a small buzz), then drag up or down. The other decks slide out of the way and the deck lands where you let go (a drag shorter than half a card changes nothing). A quick tap still opens the deck, buttons on the card still work, and scrolling the page is unaffected until a hold is up. Screen readers get "Move up" and "Move down" actions on the deck's title. The order is saved on this phone only (it is a preference, not part of the library, so it is not synced); a deck you have not placed yet, such as a new one, appears at the top. The page does not scroll while you hold a deck, so with a very long list, drag in steps.
 
 All of these need a connection, like rename and delete, because the server holds the library; studying stays offline.
 
@@ -98,14 +99,22 @@ Turn a flashcard into a multiple choice question with the **Multiple choice** sw
 
 All the multiple choice settings live on this phone only; the wrong answers themselves are part of the card, so they sync like the rest of the library. Suggesting needs a connection; studying does not.
 
+## Finding a deck among many
+
+Once there are six or more decks and folders, Home grows two tools under "Your decks":
+
+- **Search:** type part of a deck's name or topic, or a folder's name. A folder that matches shows all its decks; a folder holding a matching deck shows just those decks; folders are open while you search. Press-and-hold reordering is switched off while a search is active, because the list is then a filtered view.
+- **All decks:** opens every folder and deck in one searchable list (folders open, loose decks under "Not in a folder"). Tap a deck to open it, or its **Study** button to start. It works from what the phone holds, so it works offline.
+- **Expand all / Collapse all** (with two or more folders) opens or closes every folder at once.
+
 ## Folders
 
 Folders group decks on the same subject, such as **Biology** holding Bio I and Bio II, or **Programming** holding Python, SQL and Git. They are kept on the server and synced like decks, so a new phone sees them too.
 
 - **Make one:** **New folder** beside "Your decks". A folder's ☰ renames it or deletes it; deleting a folder never deletes its decks (they simply stop being in a folder, and the question says so).
 - **Put a deck in one:** the deck's ☰ → **Folder** → pick a folder (or make a new one right there). This always works. As a shortcut, **press and hold a deck and drop it on a folder's card**; the folder's border lights up when letting go will file it. Drop a deck on the **Not in a folder** heading to take it out. A drag that lands anywhere else only reorders the deck among the decks of its own list.
-- **What Home shows:** folders first, then (once any folder exists) the decks that are in none. Tap a folder's name to collapse or expand it; that is remembered on this phone. A folder shows how many decks and cards it holds and what is due and new across all of them; the "new" figure respects your daily new-card limit.
-- **Study a whole folder:** the **Study folder** button on its card studies every deck in it together.
+- **What Home shows:** folders first, then (once any folder exists) the decks that are in none. Folders start **closed**, so with many of them Home is a short list of names; tap a folder to open or close it (remembered on this phone), or use **Expand all / Collapse all**. A folder's line shows how many decks and cards it holds and what is due and new across all of them; the "new" figure respects your daily new-card limit.
+- **Study a whole folder:** the **Study** button on its line studies every deck in it together; **Practice all N cards** is in its ☰ menu.
 - Folders are listed A to Z. The order of decks inside a folder is the order you dragged them into on this phone. Making, renaming, deleting and filing need a connection (like rename and merge); studying stays offline.
 
 ## Appearance

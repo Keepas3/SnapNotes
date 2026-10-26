@@ -121,22 +121,22 @@ export function useSetChoicePrefs() {
   });
 }
 
-/** The folders collapsed on Home, kept on this phone. */
-export function useClosedFolders() {
+/** The folders opened on Home, kept on this phone (every other folder is closed). */
+export function useOpenFolders() {
   const { store } = useSync();
   return useQuery<string[]>({
-    queryKey: [...LOCAL_KEY, 'closedFolders'],
-    queryFn: () => store!.closedFolders(),
+    queryKey: [...LOCAL_KEY, 'openFolders'],
+    queryFn: () => store!.openFolders(),
     enabled: store !== null,
   });
 }
 
-export function useSetClosedFolders() {
+export function useSetOpenFolders() {
   const { store } = useSync();
   const qc = useQueryClient();
-  const key = [...LOCAL_KEY, 'closedFolders'];
+  const key = [...LOCAL_KEY, 'openFolders'];
   return useMutation({
-    mutationFn: (ids: string[]) => store!.setClosedFolders(ids),
+    mutationFn: (ids: string[]) => store!.setOpenFolders(ids),
     onMutate: (ids) => qc.setQueryData(key, ids), // open or close it at once; the save follows
     onSettled: () => qc.invalidateQueries({ queryKey: key }),
   });
