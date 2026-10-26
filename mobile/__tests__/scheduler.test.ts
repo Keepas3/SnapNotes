@@ -1,5 +1,5 @@
 import { studyDayEnd, studyDayStart } from '@/study/day';
-import { CardState, describeInterval, newState, previewDue, RATINGS, ratingForSwipe, reviewCard } from '@/study/scheduler';
+import { ANSWERS, CardState, describeInterval, newState, previewDue, RATINGS, ratingForSwipe, reviewCard } from '@/study/scheduler';
 
 const T0 = new Date('2026-03-01T09:00:00.000Z');
 const minutes = (n: number) => new Date(T0.getTime() + n * 60_000);
@@ -107,6 +107,17 @@ describe('answers', () => {
       [3, 'Got it'],
       [4, 'Easy'],
     ]);
+  });
+
+  it('offers only "Missed it" and "Got it" as buttons, the same two a swipe gives, and the scheduler still knows Hard and Easy', () => {
+    expect(ANSWERS.map((a) => [a.value, a.label])).toEqual([
+      [1, 'Missed it'],
+      [3, 'Got it'],
+    ]);
+    expect(ANSWERS.map((a) => a.value)).toEqual([ratingForSwipe('left'), ratingForSwipe('right')]);
+    const s = reviewCard(newState(T0), 3, T0); // one Got it puts a new card in its first learning step
+    expect(s.state).toBe(CardState.Learning);
+    expect(RATINGS.map((r) => r.value)).toEqual([1, 2, 3, 4]);
   });
 
   it('turns a swipe into an answer: right is "got it", left is "missed it"', () => {

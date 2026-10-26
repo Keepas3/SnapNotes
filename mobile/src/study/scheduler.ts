@@ -17,6 +17,12 @@ export const RATINGS: { value: RatingValue; label: string }[] = [
   { value: 4, label: 'Easy' },
 ];
 
+/**
+ * The two answers the study screen offers: "Missed it" (Again) and "Got it" (Good), the same as swiping left and right. Hard and Easy are
+ * still understood by the scheduler (`RATINGS` above), they are just not buttons any more, to keep studying quick.
+ */
+export const ANSWERS: { value: RatingValue; label: string }[] = RATINGS.filter((r) => r.value === 1 || r.value === 3);
+
 /** What swiping a card means: right is "got it" (Good), left is "missed it" (Again). */
 export function ratingForSwipe(direction: 'left' | 'right'): RatingValue {
   return direction === 'right' ? 3 : 1;

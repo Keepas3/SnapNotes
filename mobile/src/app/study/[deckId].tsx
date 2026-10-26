@@ -12,7 +12,7 @@ import { buildOptions, optionLetter, suggestedRating, type Option } from '@/lib/
 import { plural } from '@/lib/format';
 import { parseStudyScope } from '@/lib/folders';
 import type { SwipeDirection } from '@/lib/swipe';
-import { describeInterval, previewDue, RATINGS, ratingForSwipe, type RatingValue } from '@/study/scheduler';
+import { ANSWERS, describeInterval, previewDue, ratingForSwipe, type RatingValue } from '@/study/scheduler';
 import { PROBLEM_LAPSES, type LocalCard, type StudyCounts } from '@/study/store';
 import { useChoicePrefs, useInvalidateLocal, useSetChoicePrefs } from '@/study/hooks';
 import { useSync } from '@/sync/provider';
@@ -381,10 +381,10 @@ export default function StudyScreen() {
                 ? 'You picked the right answer. Got it is suggested, but how well did you really know it?'
                 : suggested === 1
                   ? 'Not quite. Missed it is suggested, but you decide.'
-                  : 'How well did you know it? Under each button is when you will see this card again.'}
+                  : 'Did you know it? Under each button is when you will see this card again.'}
             </ThemedText>
             <View style={styles.ratings}>
-              {RATINGS.map((r) => (
+              {ANSWERS.map((r) => (
                 <RatingButton
                   key={r.value}
                   label={r.label}
@@ -628,7 +628,7 @@ const styles = StyleSheet.create({
   face: { flexGrow: 1, justifyContent: 'center', paddingVertical: Spacing.three },
   footerStack: { gap: Spacing.two },
   ratings: { flexDirection: 'row', gap: Spacing.two },
-  rating: { flex: 1, minHeight: 60, borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, paddingHorizontal: 2, alignItems: 'center', justifyContent: 'center', gap: 2 },
+  rating: { flex: 1, minHeight: 68, borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, paddingHorizontal: 2, alignItems: 'center', justifyContent: 'center', gap: 2 },
   ratingTime: { textAlign: 'center' },
   ratingSuggested: { borderWidth: 2 },
   toggleRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
